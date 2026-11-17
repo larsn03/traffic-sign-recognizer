@@ -6,7 +6,7 @@ export 'classifier/knn_classifier.dart';
 export 'classifier/learner_api.dart';
 
 export 'data/data_vector.dart';
-export 'data/data_set.dart';
+export '../data/data_vector_set.dart';
 export 'data/data_tree.dart';
 
 export 'extraction/extractor.dart';

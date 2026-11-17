@@ -1,8 +1,8 @@
 import 'data_vector.dart';
 
 /// A collection of [DataVector]s that can be classified.
-class DataSet {
+class DataVectorSet {
   List<DataVector> data;
 
-  DataSet({this.data = const []});
+  DataVectorSet({this.data = const []});
 }

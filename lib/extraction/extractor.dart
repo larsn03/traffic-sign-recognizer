@@ -1,8 +1,8 @@
-import '../data/data_set.dart';
+import '../data/data_vector_set.dart';
 
-/// Extracts data from a file (e.g. csv) into a [DataSet].
+/// Extracts data from a file (e.g. csv) into a [DataVectorSet].
 class Extractor {
-  DataSet extractToCsv(String pathToData) {
-    return DataSet();
+  DataVectorSet extractToCsv(String pathToData) {
+    return DataVectorSet();
   }
 }

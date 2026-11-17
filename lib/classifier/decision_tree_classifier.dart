@@ -1,4 +1,4 @@
-import '../data/data_set.dart';
+import '../data/data_vector_set.dart';
 import '../data/data_tree.dart';
 import 'classifier_api.dart';
 import 'classification_result_set.dart';
@@ -11,12 +11,12 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
   DecisionTreeClassifier({DataTree? tree}) : tree = tree ?? DataTree();
 
   @override
-  ClassificationResultSet classify(DataSet toBeClassified) {
+  ClassificationResultSet classify(DataVectorSet toBeClassified) {
     return ClassificationResultSet();
   }
 
   @override
-  DataTree learnFromDataSet(DataSet dataSet) {
+  DataTree learnFromDataSet(DataVectorSet dataSet) {
     return tree;
   }
 }
