@@ -10,3 +10,4 @@ export 'data/data_set.dart';
 export 'data/data_tree.dart';
 
 export 'extraction/extractor.dart';
+export 'extraction/image_extractor.dart';

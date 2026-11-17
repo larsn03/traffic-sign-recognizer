@@ -1,0 +1,3 @@
+path,shouldBe,predicted
+test_a.jpg,Sign_A,Sign_A
+test_b.jpg,Sign_B,Sign_A
