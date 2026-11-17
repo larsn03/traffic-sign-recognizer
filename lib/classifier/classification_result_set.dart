@@ -5,4 +5,6 @@ class ClassificationResultSet {
   List<ClassificationResult> results;
 
   ClassificationResultSet({this.results = const []});
+
+  void printResult() {}
 }
