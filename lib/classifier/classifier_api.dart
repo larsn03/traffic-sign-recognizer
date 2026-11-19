@@ -3,5 +3,5 @@ import 'classification_result_set.dart';
 
 /// The interface for all traffic sign classifiers.
 abstract class ClassifierApi {
-  ClassificationResultSet classify(DataVectorSet toBeClassified);
+  Future<ClassificationResultSet> classify(DataVectorSet toBeClassified);
 }

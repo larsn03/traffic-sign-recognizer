@@ -94,9 +94,8 @@ Future<int> _dispatch(List<String> args) async {
   if (classifyIn != null) {
     final trainSet = DataVectorSet.fromCsv(classifyOut!);
     final testSet = DataVectorSet.fromCsv(classifyIn);
-    final results =
-        KnnClassifier(alreadyClassifiedData: trainSet, k: k)
-            .classify(testSet);
+    final results = await KnnClassifier(alreadyClassifiedData: trainSet, k: k)
+        .classify(testSet);
     for (final result in results.results) {
       print(result.stringify());
     }
@@ -114,7 +113,8 @@ Future<int> _dispatch(List<String> args) async {
   if (dtTest != null) {
     final tree = DataTree.load(dtTreeFile!);
     final testSet = DataVectorSet.fromCsv(dtTest);
-    final results = DecisionTreeClassifier(tree: tree).classify(testSet);
+    final results =
+        await DecisionTreeClassifier(tree: tree).classify(testSet);
     writeResults(results, dtOut!);
     if (printfaulty) logFaulty(results, 'classifying.log');
     _printAccuracy(results);

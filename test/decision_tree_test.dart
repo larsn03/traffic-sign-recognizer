@@ -90,7 +90,7 @@ void main() {
     expect(leaf.predict(List<double>.filled(43, 0.0)), 'a');
   });
 
-  test('classifier wraps tree prediction', () {
+  test('classifier wraps tree prediction', () async {
     final data = <DataVector>[];
     for (var i = 0; i < 40; i++) {
       data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
@@ -98,7 +98,7 @@ void main() {
     }
     final classifier = DecisionTreeClassifier()
       ..learnFromDataSet(DataVectorSet(data: data));
-    final results = classifier.classify(
+    final results = await classifier.classify(
       DataVectorSet(data: [
         randomVector(List<double>.filled(43, 0.0), 'A'),
         randomVector(List<double>.filled(43, 1.0), 'B'),

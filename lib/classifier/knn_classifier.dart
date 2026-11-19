@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../data/data_vector.dart';
 import '../data/data_vector_set.dart';
@@ -12,17 +16,35 @@ import 'classification_result_set.dart';
 /// standardization fitted on the training set only (population standard
 /// deviation, zero-variance columns mapped to 0), Euclidean distance,
 /// majority vote with alphabetical tie-breaking.
+///
+/// Every test row is classified independently of the others, so large test
+/// sets are distributed across a pool of isolates with dynamic work
+/// distribution: each worker is handed the next row as soon as it finishes
+/// its current one (the same scheme as the extractor). Results are stored
+/// by row index, so the output order matches the input order and every
+/// prediction is bit-identical to a sequential run.
 class KnnClassifier implements ClassifierApi {
   DataVectorSet alreadyClassifiedData;
 
   /// Number of neighbours; values <= 0 fall back to the default of 5.
   final int k;
 
-  KnnClassifier({DataVectorSet? alreadyClassifiedData, this.k = 5})
-      : alreadyClassifiedData = alreadyClassifiedData ?? DataVectorSet();
+  /// Test sets with fewer rows than this are classified on the main
+  /// isolate; spawning a worker pool is not worth it below this size.
+  final int minRowsForIsolates;
+
+  KnnClassifier({
+    DataVectorSet? alreadyClassifiedData,
+    this.k = 5,
+    int? minRowsForIsolates,
+  })  : alreadyClassifiedData = alreadyClassifiedData ?? DataVectorSet(),
+        minRowsForIsolates = minRowsForIsolates ?? _defaultMinRowsForIsolates;
+
+  /// Default row count below which classification stays single-isolate.
+  static const int _defaultMinRowsForIsolates = 1000;
 
   @override
-  ClassificationResultSet classify(DataVectorSet toBeClassified) {
+  Future<ClassificationResultSet> classify(DataVectorSet toBeClassified) async {
     final kk = k <= 0 ? 5 : k;
     final train = alreadyClassifiedData.data;
     final test = toBeClassified.data;
@@ -31,76 +53,111 @@ class KnnClassifier implements ClassifierApi {
     }
 
     final numFeatures = DataVector.featureCount;
-    final trainFeatures = [for (final v in train) v.features()];
-    final testFeatures = [for (final v in test) v.features()];
 
     // Z-score standardization, fit on the training set only.
-    final mean = List<double>.filled(numFeatures, 0);
-    for (final f in trainFeatures) {
+    final mean = Float64List(numFeatures);
+    for (final vector in train) {
+      final f = vector.features();
       for (var j = 0; j < numFeatures; j++) {
         mean[j] += f[j];
       }
     }
     for (var j = 0; j < numFeatures; j++) {
-      mean[j] /= trainFeatures.length;
+      mean[j] /= train.length;
     }
-    final variance = List<double>.filled(numFeatures, 0);
-    for (final f in trainFeatures) {
+    final variance = Float64List(numFeatures);
+    for (final vector in train) {
+      final f = vector.features();
       for (var j = 0; j < numFeatures; j++) {
         final d = f[j] - mean[j];
         variance[j] += d * d;
       }
     }
-    final stddev = List<double>.generate(
-        numFeatures, (j) => math.sqrt(variance[j] / trainFeatures.length));
+    final stddev = Float64List(numFeatures);
+    for (var j = 0; j < numFeatures; j++) {
+      stddev[j] = math.sqrt(variance[j] / train.length);
+    }
 
-    double transform(List<double> f, int j) =>
-        stddev[j] == 0 ? 0 : (f[j] - mean[j]) / stddev[j];
+    final trainLabels = [for (final vector in train) vector.trafficSign];
+    final trainFlat = _standardize(train, mean, stddev, numFeatures);
+    final testFlat = _standardize(test, mean, stddev, numFeatures);
 
-    final trainStandardized = [
-      for (final f in trainFeatures)
-        [for (var j = 0; j < numFeatures; j++) transform(f, j)],
-    ];
-    final trainLabels = [for (final v in train) v.trafficSign];
+    final results = List<ClassificationResult?>.filled(test.length, null);
+    if (test.length < minRowsForIsolates) {
+      // Small test set: stay on the main isolate.
+      for (var i = 0; i < test.length; i++) {
+        results[i] = ClassificationResult(
+          path: test[i].picturePath,
+          shouldBe: test[i].trafficSign,
+          predicted: _classifyOneFlat(
+              testFlat, i, trainFlat, trainLabels, kk, numFeatures),
+        );
+      }
+    } else {
+      await _classifyParallel(
+          test, results, testFlat, trainFlat, trainLabels, kk, numFeatures);
+    }
 
     var correct = 0;
-    final results = <ClassificationResult>[];
-    for (var i = 0; i < test.length; i++) {
-      final query = [
-        for (var j = 0; j < numFeatures; j++) transform(testFeatures[i], j),
-      ];
-      final result = ClassificationResult(
-        path: test[i].picturePath,
-        shouldBe: test[i].trafficSign,
-        predicted: _classifyOne(query, trainStandardized, trainLabels, kk),
-      );
-      if (result.isCorrect) correct++;
-      results.add(result);
+    final finalResults = <ClassificationResult>[];
+    for (final result in results) {
+      final r = result!;
+      finalResults.add(r);
+      if (r.isCorrect) correct++;
     }
     return ClassificationResultSet(
-      results: results,
+      results: finalResults,
       accuracy: correct / test.length * 100,
     );
   }
 
-  /// Euclidean distance to every training vector, majority vote over the k
-  /// nearest; ties broken by alphabetical (lexicographically smallest) label.
-  String _classifyOne(List<double> query, List<List<double>> train,
-      List<String> labels, int k) {
-    final distances = <double>[];
-    for (var i = 0; i < train.length; i++) {
+  /// Copies the features of [vectors] into a flat, tightly packed buffer
+  /// with the z-score standardization applied (zero-variance columns map
+  /// to 0).
+  static Float64List _standardize(
+      List<DataVector> vectors,
+      Float64List mean,
+      Float64List stddev,
+      int numFeatures) {
+    final out = Float64List(vectors.length * numFeatures);
+    for (var i = 0; i < vectors.length; i++) {
+      final f = vectors[i].features();
+      final base = i * numFeatures;
+      for (var j = 0; j < numFeatures; j++) {
+        final sd = stddev[j];
+        out[base + j] = sd == 0 ? 0 : (f[j] - mean[j]) / sd;
+      }
+    }
+    return out;
+  }
+
+  /// Euclidean distance from test row [row] to every training vector,
+  /// majority vote over the k nearest; ties broken by alphabetical
+  /// (lexicographically smallest) label.
+  static String _classifyOneFlat(
+    Float64List testFlat,
+    int row,
+    Float64List trainFlat,
+    List<String> labels,
+    int k,
+    int numFeatures,
+  ) {
+    final n = trainFlat.length ~/ numFeatures;
+    final queryBase = row * numFeatures;
+    final distances = List<double>.generate(n, (i) {
+      final base = i * numFeatures;
       var sum = 0.0;
-      for (var j = 0; j < query.length; j++) {
-        final d = query[j] - train[i][j];
+      for (var j = 0; j < numFeatures; j++) {
+        final d = testFlat[queryBase + j] - trainFlat[base + j];
         sum += d * d;
       }
-      distances.add(math.sqrt(sum));
-    }
-    final order = List<int>.generate(distances.length, (i) => i)
+      return math.sqrt(sum);
+    });
+    final order = List<int>.generate(n, (i) => i)
       ..sort((a, b) => distances[a].compareTo(distances[b]));
     final votes = <String, int>{};
-    for (var n = 0; n < k; n++) {
-      final label = labels[order[n]];
+    for (var m = 0; m < k; m++) {
+      final label = labels[order[m]];
       votes[label] = (votes[label] ?? 0) + 1;
     }
     var best = '';
@@ -114,4 +171,120 @@ class KnnClassifier implements ClassifierApi {
     }
     return best;
   }
+
+  /// Distributes the test rows across a pool of isolates using dynamic work
+  /// distribution: workers register themselves, receive one row index at a
+  /// time, and are fed the next row as soon as they report a result, so
+  /// the pool stays fully busy until every row is done.
+  Future<void> _classifyParallel(
+    List<DataVector> test,
+    List<ClassificationResult?> results,
+    Float64List testFlat,
+    Float64List trainFlat,
+    List<String> trainLabels,
+    int k,
+    int numFeatures,
+  ) async {
+    final workers = math.min(_workerCount(), test.length);
+    final port = ReceivePort();
+    final done = Completer<void>();
+    final workerPorts = <SendPort>[];
+    var nextIndex = 0;
+    var remaining = test.length;
+
+    // Hand the next queued row to [workerPort]; a no-op once every row has
+    // been dispatched.
+    void dispatch(SendPort workerPort) {
+      if (nextIndex < test.length) {
+        workerPort.send(nextIndex++);
+      }
+    }
+
+    final subscription = port.listen((dynamic message) {
+      if (message is SendPort) {
+        // A worker registered; give it its first row.
+        workerPorts.add(message);
+        dispatch(message);
+      } else {
+        final list = message as List<dynamic>;
+        final index = list[0] as int;
+        final predicted = list[1] as String;
+        results[index] = ClassificationResult(
+          path: test[index].picturePath,
+          shouldBe: test[index].trafficSign,
+          predicted: predicted,
+        );
+        remaining--;
+        final workerPort = list[2] as SendPort;
+        if (remaining > 0) {
+          // This worker just freed up; feed it the next row.
+          dispatch(workerPort);
+        } else {
+          // Everything is done; shut every worker down.
+          for (final sp in workerPorts) {
+            sp.send(null);
+          }
+          done.complete();
+        }
+      }
+    });
+
+    for (var i = 0; i < workers; i++) {
+      Isolate.spawn(_knnWorkerMain, <dynamic>[
+        port.sendPort,
+        trainFlat,
+        trainLabels,
+        testFlat,
+        k,
+        numFeatures,
+      ]);
+    }
+    await done.future;
+    await subscription.cancel();
+    port.close();
+  }
+}
+
+/// Worker entry point: announces itself, then classifies row indices until
+/// it receives the shutdown sentinel (null).
+void _knnWorkerMain(List<dynamic> args) {
+  final resultPort = args[0] as SendPort;
+  final trainFlat = args[1] as Float64List;
+  final trainLabels = args[2] as List<String>;
+  final testFlat = args[3] as Float64List;
+  final k = args[4] as int;
+  final numFeatures = args[5] as int;
+
+  final port = ReceivePort();
+  resultPort.send(port.sendPort);
+  port.listen((dynamic message) {
+    if (message == null) {
+      port.close();
+      return;
+    }
+    final index = message as int;
+    final predicted = KnnClassifier._classifyOneFlat(
+        testFlat, index, trainFlat, trainLabels, k, numFeatures);
+    resultPort.send(<dynamic>[index, predicted, port.sendPort]);
+  });
+}
+
+/// Chooses the worker count: honour the `TSR_WORKERS` environment variable
+/// if set, else default to the logical processor count.
+int _workerCount() {
+  final fromEnv = int.tryParse(Platform.environment['TSR_WORKERS'] ?? '');
+  if (fromEnv != null && fromEnv > 0) return fromEnv;
+  return math.max(1, _processorCount());
+}
+
+/// The number of logical CPU threads, floored to at least 1.
+int _processorCount() {
+  try {
+    final result = Process.runSync('nproc', []);
+    final count = int.tryParse(result.stdout.toString().trim());
+    if (count != null && count > 0) return count;
+  } catch (_) {
+    // fall through to the default
+  }
+  return 1;
 }

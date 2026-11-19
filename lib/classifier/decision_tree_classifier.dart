@@ -12,7 +12,8 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
   DecisionTreeClassifier({DataTree? tree}) : tree = tree ?? DataTree();
 
   @override
-  ClassificationResultSet classify(DataVectorSet toBeClassified) {
+  Future<ClassificationResultSet> classify(
+      DataVectorSet toBeClassified) async {
     var correct = 0;
     final results = <ClassificationResult>[];
     for (final vector in toBeClassified.data) {

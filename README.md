@@ -57,7 +57,9 @@ dart run bin/traffic_sign_recognizer.dart -knn <test.csv> <train.csv> [k]
 ```
 
 Classifies the test set using the training set. `k` defaults to `5`. Prints one
-result line per image plus `Correctly classified: N%`.
+result line per image plus `Correctly classified: N%`. Test sets with more
+than 1000 rows are classified by a pool of worker isolates (see
+[Parallelism](#parallelism)); results are identical to a sequential run.
 
 ### Decision-tree training
 
@@ -116,15 +118,24 @@ preserved, source untouched):
 python3 mix_datasets.py <source_dir> <output_dir>
 ```
 
-## Parallel extraction
+## Parallelism
 
 Extraction uses an isolate work-stealing pool. On machines where a single
 process cannot saturate all cores, large jobs are automatically sharded across
-child processes. This can be controlled with environment variables:
+child processes.
+
+KNN classification parallelises the same way: every test row is classified
+independently, so rows are handed one at a time to a pool of worker isolates
+(test sets with more than 1000 rows). Results are stored by row index, so the
+output order and every prediction are identical to a sequential run — only
+the wall time changes (on this machine: ~2 min → ~14 s for the 14.5k-row test
+set).
+
+Both can be controlled with environment variables:
 
 - `TSR_WORKERS` — total worker isolates (default: CPU count).
-- `TSR_SHARDS` / `TSR_SHARD` — internal sharding coordinates (set automatically
-  by the orchestrator; generally not needed by hand).
+- `TSR_SHARDS` / `TSR_SHARD` — internal sharding coordinates for extraction
+  (set automatically by the orchestrator; generally not needed by hand).
 
 ## CSV schema
 
