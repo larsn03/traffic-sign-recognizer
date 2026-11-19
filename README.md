@@ -56,10 +56,12 @@ one feature-vector row per image (45 columns; see [CSV schema](#csv-schema)).
 dart run bin/traffic_sign_recognizer.dart -knn <test.csv> <train.csv> [k]
 ```
 
-Classifies the test set using the training set. `k` defaults to `5`. Prints one
-result line per image plus `Correctly classified: N%`. Test sets with more
-than 1000 rows are classified by a pool of worker isolates (see
-[Parallelism](#parallelism)); results are identical to a sequential run.
+Classifies the test set using the training set. `k` defaults to `5`. Prints a
+headline naming the algorithm and the standardization used, then
+`Correctly classified: N%` plus a statistics summary (expected value,
+standard deviation, 95% confidence interval of the accuracy proportion).
+Test sets with more than 1000 rows are classified by a pool of worker isolates
+(see [Parallelism](#parallelism)); results are identical to a sequential run.
 
 ### Decision-tree training
 
@@ -76,7 +78,10 @@ dart run bin/traffic_sign_recognizer.dart -dtree-classify <tree.json> <test.csv>
 ```
 
 Loads the tree, classifies the test set, and writes one prediction per line to
-`<out.csv>`.
+`<out.csv>`. Also prints a headline naming the algorithm and the
+standardization used, then `Correctly classified: N%` plus a statistics
+summary (expected value, standard deviation, 95% confidence interval of the
+accuracy proportion).
 
 ### `-printfaulty`
 

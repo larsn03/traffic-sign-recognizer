@@ -131,9 +131,9 @@ Future<int> _dispatch(List<String> args) async {
     }
     final results = await KnnClassifier(alreadyClassifiedData: trainSet, k: k)
         .classify(testSet);
-    for (final result in results.results) {
-      print(result.stringify());
-    }
+    final standardization =
+        z ? 'z' : minmax ? 'minmax' : l1 ? 'l1' : l2 ? 'l2' : null;
+    print('KNN | standardization: ${_standardizationName(standardization)}');
     if (printfaulty) logFaulty(results, 'classifying.log');
     _printAccuracy(results);
     return 0;
@@ -204,6 +204,8 @@ Future<int> _dispatch(List<String> args) async {
     final results =
         await DecisionTreeClassifier(tree: tree).classify(testSet);
     writeResults(results, dtOut!);
+    print('Decision tree | standardization: '
+        '${_standardizationName(tree.standardization)}');
     if (printfaulty) logFaulty(results, 'classifying.log');
     _printAccuracy(results);
     return 0;
@@ -216,9 +218,24 @@ int _fail(String message) {
   return 1;
 }
 
+/// Human-readable name of a standardization method (`null` = raw features).
+String _standardizationName(String? s) => switch (s) {
+      'z' => 'z-score',
+      'minmax' => 'min-max',
+      'l1' => 'L1 norm',
+      'l2' => 'L2 norm',
+      _ => 'none',
+    };
+
 void _printAccuracy(ClassificationResultSet results) {
   final rounded = (results.accuracy + 0.5).floor();
   print('Correctly classified: $rounded%');
+  final ci = results.confidenceInterval;
+  print('Correct: ${results.correctCount} / ${results.total}');
+  print('Expected value: ${results.expectedValue.toStringAsFixed(4)}');
+  print('Standard deviation: ${results.standardDeviation.toStringAsFixed(4)}');
+  print('95% confidence interval: '
+      '[${ci.$1.toStringAsFixed(4)}, ${ci.$2.toStringAsFixed(4)}]');
 }
 
 /// Writes each result's faulty line (empty when correct) to [path],
