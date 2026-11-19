@@ -11,12 +11,20 @@ Future<void> main(List<String> args) async {
 ///
 /// Argument parsing is a manual two-pass walk (no flag package), mirroring
 /// the Go original:
-///  * first pass extracts the standalone `-printfaulty` boolean flag;
+///  * first pass extracts the standalone `-printfaulty`, `-z` and `-zdm`
+///    boolean flags;
 ///  * second pass dispatches on the mode flags
 ///    `-e <dir> <csv>`, `-knn <in> <out>`, `-dtree-train <train> <treeFile>`,
 ///    `-dtree-classify <tree> <test> <out>`;
 ///  * any other token must be an integer and sets the KNN k value;
 ///  * the first non-empty mode is dispatched.
+///
+/// Standardization: `-z` makes the KNN use z-score standardization (fit on
+/// the training set); `-zdm` first scales features by the data mask and
+/// then z-scores the masked features; without either flag the KNN scales
+/// features by the data mask only. The decision tree always uses the data
+/// mask. The mask is read from [datamaskPath]; a missing mask is created
+/// there with all factors `1.0`.
 Future<int> run(List<String> args) async {
   try {
     return await _dispatch(args);
@@ -26,12 +34,18 @@ Future<int> run(List<String> args) async {
 }
 
 Future<int> _dispatch(List<String> args) async {
-  // First pass: extract the standalone -printfaulty flag.
+  // First pass: extract the standalone -printfaulty, -z and -zdm flags.
   var printfaulty = false;
+  var zscore = false;
+  var zdm = false;
   final filtered = <String>[];
   for (final arg in args) {
     if (arg == '-printfaulty') {
       printfaulty = true;
+    } else if (arg == '-z') {
+      zscore = true;
+    } else if (arg == '-zdm') {
+      zdm = true;
     } else {
       filtered.add(arg);
     }
@@ -94,8 +108,16 @@ Future<int> _dispatch(List<String> args) async {
   if (classifyIn != null) {
     final trainSet = DataVectorSet.fromCsv(classifyOut!);
     final testSet = DataVectorSet.fromCsv(classifyIn);
-    final results = await KnnClassifier(alreadyClassifiedData: trainSet, k: k)
-        .classify(testSet);
+    // -z: z-score only · -zdm: data mask, then z-score · default: data mask.
+    final applyMask = !zscore;
+    final applyZscore = zscore || zdm;
+    final results = await KnnClassifier(
+      alreadyClassifiedData: trainSet,
+      k: k,
+      applyMask: applyMask,
+      applyZscore: applyZscore,
+      mask: applyMask ? DataMask.loadOrCreate(datamaskPath) : null,
+    ).classify(testSet);
     for (final result in results.results) {
       print(result.stringify());
     }
@@ -105,7 +127,9 @@ Future<int> _dispatch(List<String> args) async {
   }
   if (dtTrain != null) {
     final trainSet = DataVectorSet.fromCsv(dtTrain);
-    final tree = DecisionTreeClassifier().learnFromDataSet(trainSet);
+    final tree = DecisionTreeClassifier(
+      mask: DataMask.loadOrCreate(datamaskPath),
+    ).learnFromDataSet(trainSet);
     tree.save(dtTreeFile!);
     print('Decision tree saved to $dtTreeFile');
     return 0;
@@ -113,8 +137,10 @@ Future<int> _dispatch(List<String> args) async {
   if (dtTest != null) {
     final tree = DataTree.load(dtTreeFile!);
     final testSet = DataVectorSet.fromCsv(dtTest);
-    final results =
-        await DecisionTreeClassifier(tree: tree).classify(testSet);
+    final results = await DecisionTreeClassifier(
+      tree: tree,
+      mask: DataMask.loadOrCreate(datamaskPath),
+    ).classify(testSet);
     writeResults(results, dtOut!);
     if (printfaulty) logFaulty(results, 'classifying.log');
     _printAccuracy(results);
@@ -127,6 +153,9 @@ int _fail(String message) {
   stderr.writeln('error: $message');
   return 1;
 }
+
+/// Location of the data mask; created with all factors `1.0` when missing.
+const String datamaskPath = 'output/data-mask.yaml';
 
 void _printAccuracy(ClassificationResultSet results) {
   final rounded = (results.accuracy + 0.5).floor();

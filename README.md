@@ -53,7 +53,7 @@ one feature-vector row per image (45 columns; see [CSV schema](#csv-schema)).
 ### KNN classification
 
 ```bash
-dart run bin/traffic_sign_recognizer.dart -knn <test.csv> <train.csv> [k]
+dart run bin/traffic_sign_recognizer.dart -knn <test.csv> <train.csv> [k] [-z]
 ```
 
 Classifies the test set using the training set. `k` defaults to `5`. Prints one
@@ -61,13 +61,17 @@ result line per image plus `Correctly classified: N%`. Test sets with more
 than 1000 rows are classified by a pool of worker isolates (see
 [Parallelism](#parallelism)); results are identical to a sequential run.
 
+Feature scaling is controlled by the `-z` flag (see
+[Standardization](#standardization)).
+
 ### Decision-tree training
 
 ```bash
 dart run bin/traffic_sign_recognizer.dart -dtree-train <train.csv> <tree.json>
 ```
 
-Trains a batch-CART tree and serializes it to `<tree.json>`.
+Trains a batch-CART tree and serializes it to `<tree.json>`. Training features
+are scaled by the [data mask](#standardization).
 
 ### Decision-tree classification
 
@@ -76,7 +80,8 @@ dart run bin/traffic_sign_recognizer.dart -dtree-classify <tree.json> <test.csv>
 ```
 
 Loads the tree, classifies the test set, and writes one prediction per line to
-`<out.csv>`.
+`<out.csv>`. Test features are scaled by the same [data mask](#standardization)
+that was used during training.
 
 ### `-printfaulty`
 
@@ -89,6 +94,42 @@ the misclassified images to `classifying.log`.
 Image <path> | Should be <label> | Classified as <label>
 ```
 
+## Standardization
+
+How features are scaled before classification:
+
+- **KNN with `-z`** — z-score standardization: each of the 43 features is
+  transformed to `x → (x − mean) / stddev`, where `mean`/`stddev` are fitted on
+  the training set only (population standard deviation; zero-variance features
+  map to `0`).
+- **KNN without `-z` (default)** — no z-scoring; each feature is multiplied by
+  its [data mask](#data-mask) factor instead.
+- **Decision tree** — always uses the data mask (it has no z-score path); the
+  mask is applied both when training and when predicting.
+
+Extraction never applies any scaling; CSV files always contain raw features.
+
+### Data mask
+
+The data mask is a YAML file with one factor per feature *family* (a group of
+related parameters):
+
+| family                       | features              |
+|------------------------------|-----------------------|
+| `number_of_different_colors` | color count           |
+| `contains_colors`            | red/blue/yellow/black flags |
+| `number_of_changes_vertically`   | 10 vertical change counts |
+| `number_of_changes_horizontally` | 10 horizontal change counts |
+| `white_fraction`             | 9 white fractions     |
+| `left_right_asymmetry`       | 9 asymmetries         |
+
+Every feature of a data vector is multiplied by its family's factor before
+classification. The mask is read from `output/data-mask.yaml`; if the file does
+not exist it is created there with every factor `1.0` (the identity, i.e. no
+scaling). See `data-mask-example.yaml` for the format. To change the scaling,
+edit the factors in `output/data-mask.yaml` and re-run (retrain the tree if you
+change the mask between training and classification).
+
 ## Makefile
 
 Convenience wrappers around the CLI (artifacts are written under `./output`):
@@ -99,7 +140,8 @@ Convenience wrappers around the CLI (artifacts are written under `./output`):
 | `etrain` | extract the training set → `output/training_data.csv` |
 | `etree` | train the tree → `output/tree.json` |
 | `ctree` | classify the test set with the tree → `output/results_tree.csv` |
-| `cknn` | classify the test set with KNN |
+| `cknn` | classify the test set with KNN (data-mask scaling) |
+| `cknnz` | classify the test set with KNN + `-z` (z-score standardization) |
 | `cknnlog` | KNN + `-printfaulty` (logs to `classifying.log`) |
 | `all` | run the full pipeline |
 | `clean` | remove generated artifacts |

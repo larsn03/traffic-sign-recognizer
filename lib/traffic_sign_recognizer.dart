@@ -11,6 +11,7 @@ export 'classifier/decision_tree_classifier.dart';
 export 'classifier/knn_classifier.dart';
 export 'classifier/learner_api.dart';
 
+export 'data/data_mask.dart';
 export 'data/data_tree.dart';
 export 'data/data_vector.dart';
 export 'data/data_vector_set.dart';

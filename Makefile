@@ -8,7 +8,7 @@ APP    := dart run bin/traffic_sign_recognizer.dart
 ASSETS := ./assets
 OUT    := ./output
 
-.PHONY: all prepare eclass etrain etree ctree cknn cknnlog clean
+.PHONY: all prepare eclass etrain etree ctree cknn cknnz cknnlog clean
 
 # Run the full pipeline: extract both sets, train the tree, classify.
 all: prepare eclass etrain etree ctree cknn
@@ -33,9 +33,13 @@ etree: prepare
 ctree: prepare
 	$(APP) -dtree-classify $(OUT)/tree.json $(OUT)/to_be_classified_data.csv $(OUT)/results_tree.csv
 
-# Classify the test set with KNN (default k=5).
+# Classify the test set with KNN (default k=5, data-mask scaling).
 cknn: prepare
 	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv
+
+# Classify the test set with KNN using z-score standardization (-z).
+cknnz: prepare
+	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv -z
 
 # KNN classification with misclassifications logged to classifying.log.
 cknnlog: prepare

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'data_mask.dart';
 import 'data_vector_set.dart';
 
 /// A decision tree trained with batch CART (Gini impurity).
@@ -15,11 +16,14 @@ class DataTree {
   DataTree({DataTreeNode? root})
       : root = root ?? DataTreeNode.leaf(const <String, int>{});
 
-  /// Trains a tree from [dataSet].
-  static DataTree train(DataVectorSet dataSet) {
+  /// Trains a tree from [dataSet]. When [mask] is given, each feature is
+  /// multiplied by its family factor before training (the stored split
+  /// thresholds are then on the masked scale).
+  static DataTree train(DataVectorSet dataSet, {DataMask? mask}) {
+    final m = mask ?? DataMask.identity();
     final samples = [
       for (final vector in dataSet.data)
-        _Sample(vector.features(), vector.trafficSign),
+        _Sample(m.apply(vector.features()), vector.trafficSign),
     ];
     final indices = List<int>.generate(samples.length, (i) => i);
     return DataTree(root: _build(samples, indices, 0));

@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:test/test.dart';
 import 'package:traffic_sign_recognizer/classifier/decision_tree_classifier.dart';
+import 'package:traffic_sign_recognizer/data/data_mask.dart';
 import 'package:traffic_sign_recognizer/data/data_tree.dart';
 import 'package:traffic_sign_recognizer/data/data_vector.dart';
 import 'package:traffic_sign_recognizer/data/data_vector_set.dart';
@@ -88,6 +89,51 @@ void main() {
     final leaf = DataTreeNode.leaf({'b': 2, 'a': 2, 'c': 1});
     expect(leaf.majority(), 'a');
     expect(leaf.predict(List<double>.filled(43, 0.0)), 'a');
+  });
+
+  test('mask scales features during training', () {
+    // Separable only in the color-count family (feature 0).
+    final data = <DataVector>[];
+    final a = List<double>.filled(43, 0.0);
+    final b = List<double>.filled(43, 0.0)..[0] = 10.0;
+    for (var i = 0; i < 20; i++) {
+      data.add(randomVector(a, 'A'));
+      data.add(randomVector(b, 'B'));
+    }
+    final set = DataVectorSet(data: data);
+
+    // Identity mask: the tree separates the classes.
+    final plain =
+        DecisionTreeClassifier().learnFromDataSet(set);
+    expect(plain.root.predict(a), 'A');
+    expect(plain.root.predict(b), 'B');
+
+    // Zeroing the color family makes every sample identical: the root
+    // becomes a leaf and the alphabetical majority ('A') wins everywhere.
+    final masked = DecisionTreeClassifier(mask: DataMask([0, 1, 1, 1, 1, 1]))
+        .learnFromDataSet(set);
+    expect(masked.root.feature, -1);
+    expect(masked.root.predict(a), 'A');
+    expect(masked.root.predict(b), 'A');
+  });
+
+  test('classifier applies the mask when predicting', () async {
+    // Trained with a 2x color mask: A at 0, B at 20, threshold at 10.
+    final data = <DataVector>[];
+    final a = List<double>.filled(43, 0.0);
+    final b = List<double>.filled(43, 0.0)..[0] = 10.0;
+    for (var i = 0; i < 20; i++) {
+      data.add(randomVector(a, 'A'));
+      data.add(randomVector(b, 'B'));
+    }
+    final mask = DataMask([2, 1, 1, 1, 1, 1]);
+    final classifier = DecisionTreeClassifier(mask: mask)
+      ..learnFromDataSet(DataVectorSet(data: data));
+    // Raw 9 would route left (A), but masked 9*2=18 routes right (B).
+    final probe = List<double>.filled(43, 0.0)..[0] = 9.0;
+    final results = await classifier.classify(
+        DataVectorSet(data: [randomVector(probe, 'B')]));
+    expect(results.results[0].predicted, 'B');
   });
 
   test('classifier wraps tree prediction', () async {

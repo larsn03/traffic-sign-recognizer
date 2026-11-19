@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import '../data/data_mask.dart';
 import '../data/data_vector.dart';
 import '../data/data_vector_set.dart';
 import 'classifier_api.dart';
@@ -33,12 +34,27 @@ class KnnClassifier implements ClassifierApi {
   /// isolate; spawning a worker pool is not worth it below this size.
   final int minRowsForIsolates;
 
+  /// When true, features are first multiplied by their [_mask] family
+  /// factor.
+  final bool applyMask;
+
+  /// When true, features are z-score standardized (fit on the training
+  /// set), after the optional data-mask scaling.
+  final bool applyZscore;
+
+  /// The data mask used when [applyMask] is true.
+  final DataMask _mask;
+
   KnnClassifier({
     DataVectorSet? alreadyClassifiedData,
     this.k = 5,
     int? minRowsForIsolates,
+    this.applyMask = false,
+    this.applyZscore = true,
+    DataMask? mask,
   })  : alreadyClassifiedData = alreadyClassifiedData ?? DataVectorSet(),
-        minRowsForIsolates = minRowsForIsolates ?? _defaultMinRowsForIsolates;
+        minRowsForIsolates = minRowsForIsolates ?? _defaultMinRowsForIsolates,
+        _mask = mask ?? DataMask.identity();
 
   /// Default row count below which classification stays single-isolate.
   static const int _defaultMinRowsForIsolates = 1000;
@@ -54,33 +70,21 @@ class KnnClassifier implements ClassifierApi {
 
     final numFeatures = DataVector.featureCount;
 
-    // Z-score standardization, fit on the training set only.
-    final mean = Float64List(numFeatures);
-    for (final vector in train) {
-      final f = vector.features();
-      for (var j = 0; j < numFeatures; j++) {
-        mean[j] += f[j];
-      }
-    }
-    for (var j = 0; j < numFeatures; j++) {
-      mean[j] /= train.length;
-    }
-    final variance = Float64List(numFeatures);
-    for (final vector in train) {
-      final f = vector.features();
-      for (var j = 0; j < numFeatures; j++) {
-        final d = f[j] - mean[j];
-        variance[j] += d * d;
-      }
-    }
-    final stddev = Float64List(numFeatures);
-    for (var j = 0; j < numFeatures; j++) {
-      stddev[j] = math.sqrt(variance[j] / train.length);
-    }
-
     final trainLabels = [for (final vector in train) vector.trafficSign];
-    final trainFlat = _standardize(train, mean, stddev, numFeatures);
-    final testFlat = _standardize(test, mean, stddev, numFeatures);
+    // Feature pipeline: raw features, then optionally the data mask, then
+    // optionally z-score standardization (fit on the masked training set).
+    var trainFlat = _rawFlat(train, numFeatures);
+    var testFlat = _rawFlat(test, numFeatures);
+    if (applyMask) {
+      trainFlat = _scaleFlat(trainFlat, _mask, numFeatures);
+      testFlat = _scaleFlat(testFlat, _mask, numFeatures);
+    }
+    if (applyZscore) {
+      final (mean, stddev) = _fitStandardization(trainFlat, numFeatures);
+      trainFlat =
+          _standardizeFlat(trainFlat, mean, stddev, numFeatures);
+      testFlat = _standardizeFlat(testFlat, mean, stddev, numFeatures);
+    }
 
     final results = List<ClassificationResult?>.filled(test.length, null);
     if (test.length < minRowsForIsolates) {
@@ -111,22 +115,71 @@ class KnnClassifier implements ClassifierApi {
     );
   }
 
-  /// Copies the features of [vectors] into a flat, tightly packed buffer
-  /// with the z-score standardization applied (zero-variance columns map
-  /// to 0).
-  static Float64List _standardize(
-      List<DataVector> vectors,
-      Float64List mean,
-      Float64List stddev,
-      int numFeatures) {
+  /// Copies the raw features of [vectors] into a flat, tightly packed
+  /// buffer.
+  static Float64List _rawFlat(List<DataVector> vectors, int numFeatures) {
     final out = Float64List(vectors.length * numFeatures);
     for (var i = 0; i < vectors.length; i++) {
-      final f = vectors[i].features();
+      out.setRange(i * numFeatures, i * numFeatures + numFeatures,
+          vectors[i].features());
+    }
+    return out;
+  }
+
+  /// Multiplies every feature of the flat buffer [flat] by its data-mask
+  /// family factor.
+  static Float64List _scaleFlat(
+      Float64List flat, DataMask mask, int numFeatures) {
+    final n = flat.length ~/ numFeatures;
+    final out = Float64List(flat.length);
+    for (var i = 0; i < n; i++) {
+      final base = i * numFeatures;
+      out.setRange(base, base + numFeatures,
+          mask.apply(flat.sublist(base, base + numFeatures)));
+    }
+    return out;
+  }
+
+  /// Fits the z-score parameters (mean, population standard deviation) on
+  /// the training rows of [trainFlat]; the operation order matches the
+  /// original per-vector accumulation exactly.
+  static (Float64List, Float64List) _fitStandardization(
+      Float64List trainFlat, int numFeatures) {
+    final n = trainFlat.length ~/ numFeatures;
+    final mean = Float64List(numFeatures);
+    for (var i = 0; i < n; i++) {
       final base = i * numFeatures;
       for (var j = 0; j < numFeatures; j++) {
-        final sd = stddev[j];
-        out[base + j] = sd == 0 ? 0 : (f[j] - mean[j]) / sd;
+        mean[j] += trainFlat[base + j];
       }
+    }
+    for (var j = 0; j < numFeatures; j++) {
+      mean[j] /= n;
+    }
+    final variance = Float64List(numFeatures);
+    for (var i = 0; i < n; i++) {
+      final base = i * numFeatures;
+      for (var j = 0; j < numFeatures; j++) {
+        final d = trainFlat[base + j] - mean[j];
+        variance[j] += d * d;
+      }
+    }
+    final stddev = Float64List(numFeatures);
+    for (var j = 0; j < numFeatures; j++) {
+      stddev[j] = math.sqrt(variance[j] / n);
+    }
+    return (mean, stddev);
+  }
+
+  /// Applies the z-score standardization to the flat buffer [flat]
+  /// (zero-variance columns map to 0).
+  static Float64List _standardizeFlat(
+      Float64List flat, Float64List mean, Float64List stddev, int numFeatures) {
+    final out = Float64List(flat.length);
+    for (var i = 0; i < flat.length; i++) {
+      final j = i % numFeatures;
+      final sd = stddev[j];
+      out[i] = sd == 0 ? 0 : (flat[i] - mean[j]) / sd;
     }
     return out;
   }

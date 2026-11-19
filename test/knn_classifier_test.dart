@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:test/test.dart';
 import 'package:traffic_sign_recognizer/classifier/classification_result.dart';
 import 'package:traffic_sign_recognizer/classifier/knn_classifier.dart';
+import 'package:traffic_sign_recognizer/data/data_mask.dart';
 import 'package:traffic_sign_recognizer/data/data_vector.dart';
 import 'package:traffic_sign_recognizer/data/data_vector_set.dart';
 
@@ -100,6 +101,84 @@ void main() {
     final faulty = resultsOf('p.bmp', 'Stop', 'Vorfahrt von rechts');
     expect(faulty.stringifyIfFaulty(),
         'Image p.bmp | Should be Stop | Classified as Vorfahrt von rechts');
+  });
+
+  test('mask mode scales features (no z-score)', () async {
+    // Cluster A at the origin; cluster B is far away in the color-count
+    // family (feature 0) and slightly in the white-fraction family
+    // (feature 25). The test point sits close to B in the color family.
+    final zero = List<double>.filled(DataVector.featureCount, 0.0);
+    final b = List<double>.filled(DataVector.featureCount, 0.0)
+      ..[0] = 10.0
+      ..[25] = 1.0;
+    final query = List<double>.filled(DataVector.featureCount, 0.0)
+      ..[0] = 9.0;
+    final train = DataVectorSet(data: [
+      for (var i = 0; i < 3; i++) vector('A', zero),
+      for (var i = 0; i < 3; i++) vector('B', b),
+    ]);
+    final test = DataVectorSet(data: [vector('B', query)]);
+
+    // Identity mask: the color family dominates -> nearest are the B's.
+    final identity = await KnnClassifier(
+      alreadyClassifiedData: train,
+      k: 3,
+      applyMask: true,
+      applyZscore: false,
+      mask: DataMask.identity(),
+    ).classify(test);
+    expect(identity.results[0].predicted, 'B');
+
+    // Zeroing the color family flips the winner to A.
+    final masked = await KnnClassifier(
+      alreadyClassifiedData: train,
+      k: 3,
+      applyMask: true,
+      applyZscore: false,
+      mask: DataMask([0, 1, 1, 1, 1, 1]),
+    ).classify(test);
+    expect(masked.results[0].predicted, 'A');
+  });
+
+  test('mask-then-z-score mode', () async {
+    // Same layout as the mask-mode test: A at the origin, B far away in the
+    // color family (feature 0) and the white family (feature 25); the
+    // query sits close to B in the color family.
+    final zero = List<double>.filled(DataVector.featureCount, 0.0);
+    final b = List<double>.filled(DataVector.featureCount, 0.0)
+      ..[0] = 10.0
+      ..[25] = 1.0;
+    final query = List<double>.filled(DataVector.featureCount, 0.0)
+      ..[0] = 9.0;
+    final train = DataVectorSet(data: [
+      for (var i = 0; i < 3; i++) vector('A', zero),
+      for (var i = 0; i < 3; i++) vector('B', b),
+    ]);
+    final test = DataVectorSet(data: [vector('B', query)]);
+
+    // With the identity mask, masking before z-scoring changes nothing.
+    final z = await KnnClassifier(alreadyClassifiedData: train, k: 3)
+        .classify(test);
+    final zdmIdentity = await KnnClassifier(
+      alreadyClassifiedData: train,
+      k: 3,
+      applyMask: true,
+      applyZscore: true,
+      mask: DataMask.identity(),
+    ).classify(test);
+    expect(z.results[0].predicted, 'B');
+    expect(zdmIdentity.results[0].predicted, z.results[0].predicted);
+
+    // Zeroing the color family *before* z-scoring flips the winner to A
+    // (the color column becomes constant and maps to 0).
+    final zdm = await KnnClassifier(
+      alreadyClassifiedData: train,
+      k: 3,
+      applyMask: true,
+      applyZscore: true,
+      mask: DataMask([0, 1, 1, 1, 1, 1]),
+    ).classify(test);
+    expect(zdm.results[0].predicted, 'A');
   });
 
   test('parallel classification matches the sequential run', () async {
