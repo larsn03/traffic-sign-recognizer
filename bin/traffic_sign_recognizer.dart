@@ -11,7 +11,8 @@ Future<void> main(List<String> args) async {
 ///
 /// Argument parsing is a manual two-pass walk (no flag package), mirroring
 /// the Go original:
-///  * first pass extracts the standalone `-printfaulty` boolean flag;
+///  * first pass extracts the standalone `-printfaulty`, `-z`, `-minmax`,
+///    `-l1` and `-l2` boolean flags;
 ///  * second pass dispatches on the mode flags
 ///    `-e <dir> <csv>`, `-knn <in> <out>`, `-dtree-train <train> <treeFile>`,
 ///    `-dtree-classify <tree> <test> <out>`;
@@ -26,15 +27,36 @@ Future<int> run(List<String> args) async {
 }
 
 Future<int> _dispatch(List<String> args) async {
-  // First pass: extract the standalone -printfaulty flag.
+  // First pass: extract the standalone -printfaulty, -z, -minmax, -l1 and
+  // -l2 flags.
   var printfaulty = false;
+  var z = false;
+  var minmax = false;
+  var l1 = false;
+  var l2 = false;
   final filtered = <String>[];
   for (final arg in args) {
     if (arg == '-printfaulty') {
       printfaulty = true;
+    } else if (arg == '-z') {
+      z = true;
+    } else if (arg == '-minmax') {
+      minmax = true;
+    } else if (arg == '-l1') {
+      l1 = true;
+    } else if (arg == '-l2') {
+      l2 = true;
     } else {
       filtered.add(arg);
     }
+  }
+  var standardizations = 0;
+  if (z) standardizations++;
+  if (minmax) standardizations++;
+  if (l1) standardizations++;
+  if (l2) standardizations++;
+  if (standardizations > 1) {
+    return _fail('-z, -minmax, -l1 and -l2 are mutually exclusive');
   }
 
   // Second pass: dispatch on known mode flags.
@@ -94,6 +116,19 @@ Future<int> _dispatch(List<String> args) async {
   if (classifyIn != null) {
     final trainSet = DataVectorSet.fromCsv(classifyOut!);
     final testSet = DataVectorSet.fromCsv(classifyIn);
+    if (z) {
+      final params = trainSet.standardizeZ();
+      testSet.standardizeZ(mean: params.$1, stddev: params.$2);
+    } else if (minmax) {
+      final params = trainSet.minMaxStandardize();
+      testSet.minMaxStandardize(min: params.$1, max: params.$2);
+    } else if (l1) {
+      trainSet.l1Standardize();
+      testSet.l1Standardize();
+    } else if (l2) {
+      trainSet.l2Standardize();
+      testSet.l2Standardize();
+    }
     final results = await KnnClassifier(alreadyClassifiedData: trainSet, k: k)
         .classify(testSet);
     for (final result in results.results) {
@@ -105,7 +140,31 @@ Future<int> _dispatch(List<String> args) async {
   }
   if (dtTrain != null) {
     final trainSet = DataVectorSet.fromCsv(dtTrain);
-    final tree = DecisionTreeClassifier().learnFromDataSet(trainSet);
+    String? standardization;
+    List<double>? mean, stddev, min, max;
+    if (z) {
+      standardization = 'z';
+      final params = trainSet.standardizeZ();
+      mean = params.$1;
+      stddev = params.$2;
+    } else if (minmax) {
+      standardization = 'minmax';
+      final params = trainSet.minMaxStandardize();
+      min = params.$1;
+      max = params.$2;
+    } else if (l1) {
+      standardization = 'l1';
+      trainSet.l1Standardize();
+    } else if (l2) {
+      standardization = 'l2';
+      trainSet.l2Standardize();
+    }
+    final tree = DecisionTreeClassifier().learnFromDataSet(trainSet,
+        standardization: standardization,
+        mean: mean,
+        stddev: stddev,
+        min: min,
+        max: max);
     tree.save(dtTreeFile!);
     print('Decision tree saved to $dtTreeFile');
     return 0;
@@ -113,6 +172,35 @@ Future<int> _dispatch(List<String> args) async {
   if (dtTest != null) {
     final tree = DataTree.load(dtTreeFile!);
     final testSet = DataVectorSet.fromCsv(dtTest);
+    final standardization = tree.standardization;
+    if (z) {
+      if (standardization != 'z') {
+        return _fail(
+            'tree $dtTreeFile was trained without -z; pass -z to classify with it');
+      }
+      testSet.standardizeZ(mean: tree.mean!, stddev: tree.stddev!);
+    } else if (minmax) {
+      if (standardization != 'minmax') {
+        return _fail(
+            'tree $dtTreeFile was trained without -minmax; pass -minmax to classify with it');
+      }
+      testSet.minMaxStandardize(min: tree.min!, max: tree.max!);
+    } else if (l1) {
+      if (standardization != 'l1') {
+        return _fail(
+            'tree $dtTreeFile was trained without -l1; pass -l1 to classify with it');
+      }
+      testSet.l1Standardize();
+    } else if (l2) {
+      if (standardization != 'l2') {
+        return _fail(
+            'tree $dtTreeFile was trained without -l2; pass -l2 to classify with it');
+      }
+      testSet.l2Standardize();
+    } else if (standardization != null) {
+      return _fail('tree $dtTreeFile was trained with standardization '
+          '($standardization); pass -z, -minmax, -l1 or -l2 to classify with it');
+    }
     final results =
         await DecisionTreeClassifier(tree: tree).classify(testSet);
     writeResults(results, dtOut!);

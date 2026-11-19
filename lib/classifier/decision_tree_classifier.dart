@@ -14,13 +14,6 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
   @override
   Future<ClassificationResultSet> classify(
       DataVectorSet toBeClassified) async {
-    // The tree was trained on z-score standardized features; put the test
-    // set on the same scale before routing it down the tree.
-    final mean = tree.mean;
-    final stddev = tree.stddev;
-    if (mean != null && stddev != null) {
-      toBeClassified.standardizeZ(mean: mean, stddev: stddev);
-    }
     var correct = 0;
     final results = <ClassificationResult>[];
     for (final vector in toBeClassified.data) {
@@ -38,12 +31,28 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
     );
   }
 
+  /// Trains a tree from [dataSet]. [standardization] names the method the
+  /// samples were standardized with (`'z'`, `'minmax'`, `'l1'` or `'l2'`),
+  /// and [mean]/[stddev] / [min]/[max] are the matching parameters (see
+  /// [DataVectorSet.standardizeZ], [DataVectorSet.minMaxStandardize],
+  /// [DataVectorSet.l1Standardize] and [DataVectorSet.l2Standardize]); they
+  /// are stored with the tree so new data can be put on the same scale
+  /// before prediction.
   @override
-  DataTree learnFromDataSet(DataVectorSet dataSet) {
-    // Z-score standardize the training set in place and remember the
-    // parameters with the tree, so test data is put on the same scale.
-    final params = dataSet.standardizeZ();
-    tree = DataTree.train(dataSet, mean: params.$1, stddev: params.$2);
+  DataTree learnFromDataSet(
+    DataVectorSet dataSet, {
+    String? standardization,
+    List<double>? mean,
+    List<double>? stddev,
+    List<double>? min,
+    List<double>? max,
+  }) {
+    tree = DataTree.train(dataSet,
+        standardization: standardization,
+        mean: mean,
+        stddev: stddev,
+        min: min,
+        max: max);
     return tree;
   }
 }

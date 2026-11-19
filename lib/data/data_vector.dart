@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 /// The base model for a single data entry.
 ///
 /// Mirrors the Go project's `DataVectorV1`: a fixed feature vector extracted
@@ -78,6 +80,44 @@ class DataVector {
     for (var j = 0; j < features.length; j++) {
       final sd = stddev[j];
       features[j] = sd == 0 ? 0 : (features[j] - mean[j]) / sd;
+    }
+  }
+
+  /// Rewrites [features] in place as `(x - min) / (max - min)`, mapping
+  /// each column to [0, 1]; a column with zero range maps to 0.
+  void minMaxStandardize(List<double> min, List<double> max) {
+    for (var j = 0; j < features.length; j++) {
+      final range = max[j] - min[j];
+      features[j] = range == 0 ? 0 : (features[j] - min[j]) / range;
+    }
+  }
+
+  /// Rewrites [features] in place as `x / ||x||_1` (L1 norm scaling), so
+  /// the sum of the absolute values of the features is 1; a zero-norm
+  /// vector stays all zeros.
+  void l1Standardize() {
+    var norm = 0.0;
+    for (final f in features) {
+      norm += f.abs();
+    }
+    if (norm == 0) return;
+    for (var j = 0; j < features.length; j++) {
+      features[j] /= norm;
+    }
+  }
+
+  /// Rewrites [features] in place as `x / ||x||_2` (L2 norm scaling), so
+  /// the sum of the squares of the features is 1; a zero-norm vector
+  /// stays all zeros.
+  void l2Standardize() {
+    var norm = 0.0;
+    for (final f in features) {
+      norm += f * f;
+    }
+    norm = math.sqrt(norm);
+    if (norm == 0) return;
+    for (var j = 0; j < features.length; j++) {
+      features[j] /= norm;
     }
   }
 

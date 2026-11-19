@@ -12,11 +12,13 @@ import 'classification_result_set.dart';
 
 /// A k-nearest-neighbour classifier, backed by already classified data.
 ///
-/// Mirrors the Go project's `dataclassification` package: z-score
-/// standardization (fitted on the training set only, population standard
-/// deviation, zero-variance columns mapped to 0) via
-/// [DataVectorSet.standardizeZ], applied to both sets in memory; Euclidean
-/// distance; majority vote with alphabetical tie-breaking.
+/// Mirrors the Go project's `dataclassification` package: Euclidean
+/// distance over the features as stored in the sets, majority vote with
+/// alphabetical tie-breaking. Standardization is not applied here; the
+/// caller may transform the sets in place via
+/// [DataVectorSet.standardizeZ], [DataVectorSet.minMaxStandardize],
+/// [DataVectorSet.l1Standardize] or [DataVectorSet.l2Standardize] before
+/// classifying.
 ///
 /// Every test row is classified independently of the others, so large test
 /// sets are distributed across a pool of isolates with dynamic work
@@ -54,11 +56,6 @@ class KnnClassifier implements ClassifierApi {
     }
 
     final numFeatures = DataVector.featureCount;
-
-    // Z-score standardization, fitted on the training set only and applied
-    // to both sets in place (see [DataVectorSet.standardizeZ]).
-    final params = alreadyClassifiedData.standardizeZ();
-    toBeClassified.standardizeZ(mean: params.$1, stddev: params.$2);
 
     final trainLabels = [for (final vector in train) vector.trafficSign];
     final trainFlat = _flatten(train, numFeatures);

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:test/test.dart';
 import 'package:traffic_sign_recognizer/data/data_vector.dart';
 import 'package:traffic_sign_recognizer/data/data_vector_set.dart';
@@ -143,5 +145,178 @@ void main() {
     expect(stddev.length, DataVector.featureCount);
     expect(mean, everyElement(0));
     expect(stddev, everyElement(0));
+  });
+
+  test('minMaxStandardize fits on this set and rewrites features in place',
+      () {
+    final a = vector();
+    final b = vector(colors: 4);
+    final set = DataVectorSet(data: [a, b]);
+    final (min, max) = set.minMaxStandardize();
+
+    // Only the color-count column varies: it spans [2, 4].
+    expect(min.length, DataVector.featureCount);
+    expect(min[0], 2.0);
+    expect(max[0], 4.0);
+    expect(a.features[0], 0.0);
+    expect(b.features[0], 1.0);
+    // Zero-range columns map to 0.
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(a.features[j], 0);
+      expect(b.features[j], 0);
+    }
+    // The raw typed fields — and thus the CSV encoding — are untouched.
+    expect(a.numberOfDifferentColors, 2.0);
+    expect(b.numberOfDifferentColors, 4.0);
+    expect(a.toRow(), vector().toRow());
+  });
+
+  test('minMaxStandardize applies externally fitted parameters', () {
+    final train = DataVectorSet(data: [vector(), vector(colors: 4)]);
+    final params = train.minMaxStandardize();
+    final testSet = DataVectorSet(data: [vector()]);
+    final applied =
+        testSet.minMaxStandardize(min: params.$1, max: params.$2);
+    expect(applied.$1, same(params.$1));
+    expect(applied.$2, same(params.$2));
+
+    final f = testSet.data.single.features;
+    // The test vector equals the training minimum in the varying column
+    // ... and 0 in the zero-range columns.
+    expect(f[0], 0.0);
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(f[j], 0);
+    }
+  });
+
+  test('minMaxStandardize on an empty set returns zero parameters', () {
+    final (min, max) = DataVectorSet().minMaxStandardize();
+    expect(min.length, DataVector.featureCount);
+    expect(max.length, DataVector.featureCount);
+    expect(min, everyElement(0));
+    expect(max, everyElement(0));
+  });
+
+  test('l1Standardize divides the vector by its L1 norm', () {
+    final v = vector();
+    v.l1Standardize();
+    // L1 norm of the default vector: 2 + 1 + 5.5 + 5.5 + 4.2 + 2.16 = 20.36
+    // (the asymmetry features contribute their absolute values).
+    expect(v.features[0], closeTo(2 / 20.36, 1e-12));
+    expect(v.features[1], closeTo(1 / 20.36, 1e-12));
+    expect(
+        v.features.fold(0.0, (sum, f) => sum + f.abs()), closeTo(1.0, 1e-9));
+    // The raw typed fields — and thus the CSV encoding — are untouched.
+    expect(v.numberOfDifferentColors, 2.0);
+    expect(v.toRow(), vector().toRow());
+  });
+
+  test('l1Standardize maps a single non-zero feature to 1', () {
+    final v = DataVector(
+      picturePath: 'p',
+      trafficSign: 'A',
+      numberOfDifferentColors: 2,
+      containsRed: 0,
+      containsBlue: 0,
+      containsYellow: 0,
+      containsBlack: 0,
+      numberOfColorChangesVertically: List<double>.filled(10, 0),
+      numberOfColorChangesHorizontally: List<double>.filled(10, 0),
+      whiteFractions: List<double>.filled(9, 0),
+      leftRightAsymmetry: List<double>.filled(9, 0),
+    );
+    v.l1Standardize();
+    expect(v.features[0], 1.0);
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(v.features[j], 0);
+    }
+  });
+
+  test('l1Standardize leaves a zero-norm vector untouched', () {
+    final v = DataVector(
+      picturePath: 'p',
+      trafficSign: 'A',
+      numberOfDifferentColors: 0,
+      containsRed: 0,
+      containsBlue: 0,
+      containsYellow: 0,
+      containsBlack: 0,
+      numberOfColorChangesVertically: List<double>.filled(10, 0),
+      numberOfColorChangesHorizontally: List<double>.filled(10, 0),
+      whiteFractions: List<double>.filled(9, 0),
+      leftRightAsymmetry: List<double>.filled(9, 0),
+    );
+    v.l1Standardize();
+    expect(v.features, everyElement(0));
+  });
+
+  test('l1Standardize on a set transforms every vector', () {
+    final set = DataVectorSet(data: [vector(), vector(colors: 4)]);
+    set.l1Standardize();
+    for (final v in set.data) {
+      expect(v.features.fold(0.0, (sum, f) => sum + f.abs()),
+          closeTo(1.0, 1e-9));
+    }
+  });
+
+  test('l2Standardize divides the vector by its L2 norm', () {
+    final v = vector();
+    final original = List<double>.of(v.features);
+    v.l2Standardize();
+    final norm = math.sqrt(original.fold(0.0, (sum, f) => sum + f * f));
+    for (var j = 0; j < DataVector.featureCount; j++) {
+      expect(v.features[j], closeTo(original[j] / norm, 1e-12));
+    }
+    expect(v.features.fold(0.0, (sum, f) => sum + f * f), closeTo(1.0, 1e-9));
+    // The raw typed fields — and thus the CSV encoding — are untouched.
+    expect(v.numberOfDifferentColors, 2.0);
+    expect(v.toRow(), vector().toRow());
+  });
+
+  test('l2Standardize maps a single non-zero feature to 1', () {
+    final v = DataVector(
+      picturePath: 'p',
+      trafficSign: 'A',
+      numberOfDifferentColors: 2,
+      containsRed: 0,
+      containsBlue: 0,
+      containsYellow: 0,
+      containsBlack: 0,
+      numberOfColorChangesVertically: List<double>.filled(10, 0),
+      numberOfColorChangesHorizontally: List<double>.filled(10, 0),
+      whiteFractions: List<double>.filled(9, 0),
+      leftRightAsymmetry: List<double>.filled(9, 0),
+    );
+    v.l2Standardize();
+    expect(v.features[0], 1.0);
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(v.features[j], 0);
+    }
+  });
+
+  test('l2Standardize leaves a zero-norm vector untouched', () {
+    final v = DataVector(
+      picturePath: 'p',
+      trafficSign: 'A',
+      numberOfDifferentColors: 0,
+      containsRed: 0,
+      containsBlue: 0,
+      containsYellow: 0,
+      containsBlack: 0,
+      numberOfColorChangesVertically: List<double>.filled(10, 0),
+      numberOfColorChangesHorizontally: List<double>.filled(10, 0),
+      whiteFractions: List<double>.filled(9, 0),
+      leftRightAsymmetry: List<double>.filled(9, 0),
+    );
+    v.l2Standardize();
+    expect(v.features, everyElement(0));
+  });
+
+  test('l2Standardize on a set transforms every vector', () {
+    final set = DataVectorSet(data: [vector(), vector(colors: 4)]);
+    set.l2Standardize();
+    for (final v in set.data) {
+      expect(v.features.fold(0.0, (sum, f) => sum + f * f), closeTo(1.0, 1e-9));
+    }
   });
 }

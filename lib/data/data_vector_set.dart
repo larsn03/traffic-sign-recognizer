@@ -79,6 +79,74 @@ class DataVectorSet {
     return (mean, stddev);
   }
 
+  /// Min-max standardizes every vector in this set, in place.
+  ///
+  /// Each of the [DataVector.featureCount] feature columns is transformed
+  /// to `(x - min) / (max - min)`, mapping the column to [0, 1], where
+  /// [min] and [max] are the column minimum and maximum. When they are not
+  /// supplied they are fit on this set; supply parameters fitted elsewhere
+  /// (e.g. on a training set) to apply them to this set instead.
+  /// Zero-range columns map to 0.
+  ///
+  /// Only the in-memory [DataVector.features] values are rewritten — the
+  /// raw typed fields, and therefore the CSV encoding, are untouched.
+  /// Returns the (min, max) actually applied.
+  (List<double>, List<double>) minMaxStandardize({
+    List<double>? min,
+    List<double>? max,
+  }) {
+    final n = DataVector.featureCount;
+    if (min == null || max == null) {
+      final lo = List<double>.filled(n, 0);
+      final hi = List<double>.filled(n, 0);
+      if (data.isNotEmpty) {
+        for (var j = 0; j < n; j++) {
+          lo[j] = double.infinity;
+          hi[j] = double.negativeInfinity;
+        }
+        for (final vector in data) {
+          final f = vector.features;
+          for (var j = 0; j < n; j++) {
+            if (f[j] < lo[j]) lo[j] = f[j];
+            if (f[j] > hi[j]) hi[j] = f[j];
+          }
+        }
+      }
+      min = lo;
+      max = hi;
+    }
+    for (final vector in data) {
+      vector.minMaxStandardize(min, max);
+    }
+    return (min, max);
+  }
+
+  /// L1-norm standardizes every vector in this set, in place: each vector
+  /// is divided by the sum of the absolute values of its features. The
+  /// transform is per-vector, so no parameters are fitted — it is applied
+  /// identically to training and test data.
+  ///
+  /// Only the in-memory [DataVector.features] values are rewritten — the
+  /// raw typed fields, and therefore the CSV encoding, are untouched.
+  void l1Standardize() {
+    for (final vector in data) {
+      vector.l1Standardize();
+    }
+  }
+
+  /// L2-norm standardizes every vector in this set, in place: each vector
+  /// is divided by the square root of the sum of the squares of its
+  /// features. The transform is per-vector, so no parameters are fitted —
+  /// it is applied identically to training and test data.
+  ///
+  /// Only the in-memory [DataVector.features] values are rewritten — the
+  /// raw typed fields, and therefore the CSV encoding, are untouched.
+  void l2Standardize() {
+    for (final vector in data) {
+      vector.l2Standardize();
+    }
+  }
+
   /// Writes the set to [pathToCsv] with the canonical header row, one row
   /// per successfully extracted vector. Uses LF line endings (matching the
   /// Go reference project's `encoding/csv` default and the multi-process

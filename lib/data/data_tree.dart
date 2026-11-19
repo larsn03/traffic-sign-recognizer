@@ -7,33 +7,55 @@ import 'data_vector_set.dart';
 ///
 /// Mirrors the Go project's `datatree` package: the tree is independent of
 /// input row order (every split is evaluated over all samples at the node).
-/// The tree may carry the z-score standardization parameters it was
-/// trained with ([mean]/[stddev]), so new data can be put on the same scale
-/// before prediction.
+/// The tree may carry the standardization method it was trained with
+/// ([standardization]: `'z'`, `'minmax'`, `'l1'` or `'l2'`) and the
+/// matching parameters (z-score: [mean]/[stddev]; min-max: [min]/[max]), so
+/// new data can be put on the same scale before prediction.
 ///
 /// Serialization: pretty-printed JSON with the top-level keys `root`,
-/// `mean`, `stddev` (the latter two omitted when absent). The node format
-/// uses the exact keys `feature`, `thresh`, `left`, `right`, `counts`.
+/// `standardization`, `mean`, `stddev`, `min`, `max` (the latter five
+/// omitted when absent). The node format uses the exact keys `feature`,
+/// `thresh`, `left`, `right`, `counts`.
 class DataTree {
   final DataTreeNode root;
 
+  /// The standardization method the tree was trained with: `'z'`, `'minmax'`,
+  /// `'l1'` or `'l2'`, or null when the tree was trained on raw features.
+  final String? standardization;
+
   /// Z-score standardization parameters the tree was trained with, or null
-  /// when the tree was trained on raw features.
+  /// when the tree was not trained with z-score standardization.
   final List<double>? mean;
   final List<double>? stddev;
 
-  DataTree({DataTreeNode? root, this.mean, this.stddev})
+  /// Min-max standardization parameters the tree was trained with, or null
+  /// when the tree was not trained with min-max standardization.
+  final List<double>? min;
+  final List<double>? max;
+
+  DataTree(
+      {DataTreeNode? root,
+      this.standardization,
+      this.mean,
+      this.stddev,
+      this.min,
+      this.max})
       : root = root ?? DataTreeNode.leaf(const <String, int>{});
 
   /// Trains a tree from [dataSet].
   ///
-  /// [mean] and [stddev] are the standardization parameters the samples
-  /// were standardized with; they are stored with the tree so new data can
-  /// be put on the same scale before prediction.
+  /// [standardization] names the method the samples were standardized with
+  /// (`'z'`, `'minmax'`, `'l1'` or `'l2'`), and the parameters
+  /// ([mean]/[stddev] for z-score, [min]/[max] for min-max) describe how
+  /// the samples were standardized; they are stored with the tree so new
+  /// data can be put on the same scale before prediction.
   static DataTree train(
     DataVectorSet dataSet, {
+    String? standardization,
     List<double>? mean,
     List<double>? stddev,
+    List<double>? min,
+    List<double>? max,
   }) {
     final samples = [
       for (final vector in dataSet.data)
@@ -42,8 +64,11 @@ class DataTree {
     final indices = List<int>.generate(samples.length, (i) => i);
     return DataTree(
       root: _build(samples, indices, 0),
+      standardization: standardization,
       mean: mean,
       stddev: stddev,
+      min: min,
+      max: max,
     );
   }
 
@@ -51,8 +76,11 @@ class DataTree {
   void save(String path) {
     final encoded = const JsonEncoder.withIndent('  ').convert({
       'root': root.toJson(),
+      if (standardization != null) 'standardization': standardization,
       if (mean != null) 'mean': mean,
       if (stddev != null) 'stddev': stddev,
+      if (min != null) 'min': min,
+      if (max != null) 'max': max,
     });
     File(path).writeAsStringSync(encoded);
   }
@@ -62,14 +90,17 @@ class DataTree {
   static DataTree load(String path) {
     final json =
         jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
-    List<double>? standardization(String key) =>
+    List<double>? params(String key) =>
         (json[key] as List<dynamic>?)
             ?.map((e) => (e as num).toDouble())
             .toList();
     return DataTree(
       root: DataTreeNode.fromJson((json['root'] ?? json) as Map<String, dynamic>),
-      mean: standardization('mean'),
-      stddev: standardization('stddev'),
+      standardization: json['standardization'] as String?,
+      mean: params('mean'),
+      stddev: params('stddev'),
+      min: params('min'),
+      max: params('max'),
     );
   }
 }

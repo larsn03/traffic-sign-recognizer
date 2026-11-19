@@ -90,8 +90,10 @@ void main() {
       data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
       data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
     }
+    final train = DataVectorSet(data: data);
+    final params = train.standardizeZ();
     final classifier = DecisionTreeClassifier()
-      ..learnFromDataSet(DataVectorSet(data: data));
+      ..learnFromDataSet(train, mean: params.$1, stddev: params.$2);
     final tree = classifier.tree;
     expect(tree.mean, isNotNull);
     expect(tree.stddev, isNotNull);
@@ -102,6 +104,73 @@ void main() {
     final loaded = DataTree.load(path);
     expect(loaded.mean, orderedEquals(tree.mean!));
     expect(loaded.stddev, orderedEquals(tree.stddev!));
+    File(path).deleteSync();
+  });
+
+  test('save/load round-trip preserves min-max parameters', () {
+    final data = <DataVector>[];
+    for (var i = 0; i < 40; i++) {
+      data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
+      data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
+    }
+    final train = DataVectorSet(data: data);
+    final params = train.minMaxStandardize();
+    final classifier = DecisionTreeClassifier()
+      ..learnFromDataSet(train, min: params.$1, max: params.$2);
+    final tree = classifier.tree;
+    expect(tree.min, isNotNull);
+    expect(tree.max, isNotNull);
+
+    final path =
+        '${Directory.systemTemp.createTempSync('tree-test').path}/tree.json';
+    tree.save(path);
+    final loaded = DataTree.load(path);
+    expect(loaded.min, orderedEquals(tree.min!));
+    expect(loaded.max, orderedEquals(tree.max!));
+    File(path).deleteSync();
+  });
+
+  test('save/load round-trip preserves the standardization marker', () {
+    final data = <DataVector>[];
+    for (var i = 0; i < 40; i++) {
+      data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
+      data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
+    }
+    final train = DataVectorSet(data: data);
+    train.l1Standardize();
+    final classifier = DecisionTreeClassifier()
+      ..learnFromDataSet(train, standardization: 'l1');
+    final tree = classifier.tree;
+    expect(tree.standardization, 'l1');
+    expect(tree.mean, isNull);
+    expect(tree.min, isNull);
+
+    final path =
+        '${Directory.systemTemp.createTempSync('tree-test').path}/tree.json';
+    tree.save(path);
+    final loaded = DataTree.load(path);
+    expect(loaded.standardization, 'l1');
+    File(path).deleteSync();
+  });
+
+  test('save/load round-trip preserves the l2 standardization marker', () {
+    final data = <DataVector>[];
+    for (var i = 0; i < 40; i++) {
+      data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
+      data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
+    }
+    final train = DataVectorSet(data: data);
+    train.l2Standardize();
+    final classifier = DecisionTreeClassifier()
+      ..learnFromDataSet(train, standardization: 'l2');
+    final tree = classifier.tree;
+    expect(tree.standardization, 'l2');
+
+    final path =
+        '${Directory.systemTemp.createTempSync('tree-test').path}/tree.json';
+    tree.save(path);
+    final loaded = DataTree.load(path);
+    expect(loaded.standardization, 'l2');
     File(path).deleteSync();
   });
 
@@ -117,14 +186,18 @@ void main() {
       data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
       data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
     }
+    // Standardize the training set in place and remember the parameters,
+    // then put the test set on the same scale before classifying.
+    final train = DataVectorSet(data: data);
+    final params = train.standardizeZ();
     final classifier = DecisionTreeClassifier()
-      ..learnFromDataSet(DataVectorSet(data: data));
-    final results = await classifier.classify(
-      DataVectorSet(data: [
-        randomVector(List<double>.filled(43, 0.0), 'A'),
-        randomVector(List<double>.filled(43, 1.0), 'B'),
-      ]),
-    );
+      ..learnFromDataSet(train, mean: params.$1, stddev: params.$2);
+    final testSet = DataVectorSet(data: [
+      randomVector(List<double>.filled(43, 0.0), 'A'),
+      randomVector(List<double>.filled(43, 1.0), 'B'),
+    ]);
+    testSet.standardizeZ(mean: params.$1, stddev: params.$2);
+    final results = await classifier.classify(testSet);
     expect(results.accuracy, 100.0);
   });
 }
