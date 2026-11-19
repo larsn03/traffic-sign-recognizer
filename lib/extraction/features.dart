@@ -117,13 +117,15 @@ DataVector extractVector(String picturePath, String trafficSign, Image img) {
   return DataVector(
     picturePath: picturePath,
     trafficSign: trafficSign,
-    numberOfDifferentColors: present.length,
-    containsRed: present.contains(ColorCategory.red),
-    containsBlue: present.contains(ColorCategory.blue),
-    containsYellow: present.contains(ColorCategory.yellow),
-    containsBlack: present.contains(ColorCategory.black),
-    numberOfColorChangesVertically: verticalChanges,
-    numberOfColorChangesHorizontally: horizontalChanges,
+    numberOfDifferentColors: present.length.toDouble(),
+    containsRed: present.contains(ColorCategory.red) ? 1 : 0,
+    containsBlue: present.contains(ColorCategory.blue) ? 1 : 0,
+    containsYellow: present.contains(ColorCategory.yellow) ? 1 : 0,
+    containsBlack: present.contains(ColorCategory.black) ? 1 : 0,
+    numberOfColorChangesVertically:
+        [for (final v in verticalChanges) v.toDouble()],
+    numberOfColorChangesHorizontally:
+        [for (final v in horizontalChanges) v.toDouble()],
     whiteFractions: whiteFractions,
     leftRightAsymmetry: leftRightAsymmetry,
   );

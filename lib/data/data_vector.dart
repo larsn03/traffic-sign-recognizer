@@ -3,6 +3,11 @@
 /// Mirrors the Go project's `DataVectorV1`: a fixed feature vector extracted
 /// from one traffic-sign image. It is the single schema shared by extraction,
 /// both classifiers, and the CSV exchange format.
+///
+/// Every numeric field is a [double]. The materialized [features] list is
+/// the single source of truth for the numeric features: the standardization
+/// methods on [DataVectorSet] rewrite it in place, while the raw typed
+/// fields (and therefore the CSV encoding) stay untouched.
 class DataVector {
   /// Number of numeric features per vector (after label + path):
   /// 1 color count + 4 flags + 10 vertical + 10 horizontal + 9 white
@@ -16,24 +21,32 @@ class DataVector {
   final String trafficSign;
 
   /// Number of distinct color categories present (red/blue/yellow/black/white).
-  final int numberOfDifferentColors;
+  final double numberOfDifferentColors;
 
-  final bool containsRed;
-  final bool containsBlue;
-  final bool containsYellow;
-  final bool containsBlack;
+  final double containsRed;
+  final double containsBlue;
+  final double containsYellow;
+  final double containsBlack;
 
   /// Color-change counts per vertical scan line (10 lines).
-  final List<int> numberOfColorChangesVertically;
+  final List<double> numberOfColorChangesVertically;
 
   /// Color-change counts per horizontal scan line (10 lines).
-  final List<int> numberOfColorChangesHorizontally;
+  final List<double> numberOfColorChangesHorizontally;
 
   /// White pixel fraction per 3x3 grid cell (9 cells, row-major).
   final List<double> whiteFractions;
 
   /// Left-right white asymmetry per 3x3 grid cell (9 cells, row-major).
   final List<double> leftRightAsymmetry;
+
+  /// The [featureCount] numeric features in canonical order.
+  ///
+  /// Materialized once at construction. The standardization methods on
+  /// [DataVectorSet] rewrite this list in place; the raw typed fields above
+  /// are left untouched, so the CSV encoding ([toRow]) is unaffected by
+  /// standardization.
+  final List<double> features;
 
   DataVector({
     required this.picturePath,
@@ -47,24 +60,25 @@ class DataVector {
     required this.numberOfColorChangesHorizontally,
     required this.whiteFractions,
     required this.leftRightAsymmetry,
-  });
+  }) : features = [
+          numberOfDifferentColors,
+          containsRed,
+          containsBlue,
+          containsYellow,
+          containsBlack,
+          for (final v in numberOfColorChangesVertically) v / 10,
+          for (final v in numberOfColorChangesHorizontally) v / 10,
+          ...whiteFractions,
+          ...leftRightAsymmetry,
+        ];
 
-  /// The [featureCount] numeric features in canonical CSV order.
-  ///
-  /// The color-change counts are stored as `value / 10`, exactly as they
-  /// appear in the CSV, so in-memory and on-disk representations agree.
-  List<double> features() {
-    return [
-      numberOfDifferentColors.toDouble(),
-      containsRed ? 1 : 0,
-      containsBlue ? 1 : 0,
-      containsYellow ? 1 : 0,
-      containsBlack ? 1 : 0,
-      for (final v in numberOfColorChangesVertically) v / 10,
-      for (final v in numberOfColorChangesHorizontally) v / 10,
-      ...whiteFractions,
-      ...leftRightAsymmetry,
-    ];
+  /// Rewrites [features] in place as `(x - mean) / stddev`; a column with
+  /// zero standard deviation maps to 0.
+  void standardize(List<double> mean, List<double> stddev) {
+    for (var j = 0; j < features.length; j++) {
+      final sd = stddev[j];
+      features[j] = sd == 0 ? 0 : (features[j] - mean[j]) / sd;
+    }
   }
 
   /// Encodes this vector as one CSV row (45 fields).
@@ -72,11 +86,11 @@ class DataVector {
     return [
       trafficSign,
       picturePath,
-      numberOfDifferentColors.toString(),
-      containsRed ? '1' : '0',
-      containsBlue ? '1' : '0',
-      containsYellow ? '1' : '0',
-      containsBlack ? '1' : '0',
+      numberOfDifferentColors.round().toString(),
+      containsRed.round() == 1 ? '1' : '0',
+      containsBlue.round() == 1 ? '1' : '0',
+      containsYellow.round() == 1 ? '1' : '0',
+      containsBlack.round() == 1 ? '1' : '0',
       for (final v in numberOfColorChangesVertically)
         (v / 10).toStringAsFixed(1),
       for (final v in numberOfColorChangesHorizontally)
@@ -88,22 +102,22 @@ class DataVector {
 
   /// Decodes one CSV row (45 fields) into a [DataVector].
   factory DataVector.fromRow(List<String> fields) {
-    bool flag(int i) => fields[i] == '1';
+    double flag(int i) => fields[i] == '1' ? 1 : 0;
     return DataVector(
       picturePath: fields[1],
       trafficSign: fields[0],
-      numberOfDifferentColors: int.parse(fields[2]),
+      numberOfDifferentColors: double.parse(fields[2]),
       containsRed: flag(3),
       containsBlue: flag(4),
       containsYellow: flag(5),
       containsBlack: flag(6),
-      numberOfColorChangesVertically: List<int>.generate(
+      numberOfColorChangesVertically: List<double>.generate(
         10,
-        (i) => (double.parse(fields[7 + i]) * 10).round(),
+        (i) => double.parse(fields[7 + i]) * 10,
       ),
-      numberOfColorChangesHorizontally: List<int>.generate(
+      numberOfColorChangesHorizontally: List<double>.generate(
         10,
-        (i) => (double.parse(fields[17 + i]) * 10).round(),
+        (i) => double.parse(fields[17 + i]) * 10,
       ),
       whiteFractions:
           List<double>.generate(9, (i) => double.parse(fields[27 + i])),

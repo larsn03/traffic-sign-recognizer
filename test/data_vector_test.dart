@@ -5,13 +5,13 @@ import 'package:traffic_sign_recognizer/data/data_vector_set.dart';
 DataVector vector({
   String path = 'Stop/0/80x60/X0Y0.bmp',
   String sign = 'Stop',
-  int colors = 2,
-  bool red = true,
-  bool blue = false,
-  bool yellow = false,
-  bool black = false,
-  List<int> vert = const [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-  List<int> hor = const [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+  double colors = 2,
+  double red = 1,
+  double blue = 0,
+  double yellow = 0,
+  double black = 0,
+  List<double> vert = const [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  List<double> hor = const [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
   List<double> white = const [0.0, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.8, 1.0],
   List<double> asym = const [0.0, -0.5, 0.25, 0.33, 0.0, -0.33, 0.5, -0.25, 0.0],
 }) {
@@ -51,8 +51,8 @@ void main() {
     expect(row[37], '-0.50'); // asym[1]
   });
 
-  test('features() returns 43 numeric features with /10 scaling', () {
-    final f = vector().features();
+  test('features returns 43 numeric features with /10 scaling', () {
+    final f = vector().features;
     expect(f.length, DataVector.featureCount);
     expect(f.length, 43);
     expect(f[0], 2.0);
@@ -93,5 +93,55 @@ void main() {
     expect(DataVectorSet.header[27], 'White_fraction_0');
     expect(DataVectorSet.header[36], 'Left_right_asymmetry_0');
     expect(DataVectorSet.header.last, 'Left_right_asymmetry_8');
+  });
+
+  test('standardizeZ fits on this set and rewrites features in place', () {
+    final a = vector();
+    final b = vector(colors: 4);
+    final set = DataVectorSet(data: [a, b]);
+    final (mean, stddev) = set.standardizeZ();
+
+    // Only the color-count column varies: mean 3, population stddev 1.
+    expect(mean.length, DataVector.featureCount);
+    expect(mean[0], 3.0);
+    expect(stddev[0], 1.0);
+    expect(a.features[0], -1.0);
+    expect(b.features[0], 1.0);
+    // Zero-variance columns map to 0.
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(stddev[j], 0);
+      expect(a.features[j], 0);
+      expect(b.features[j], 0);
+    }
+    // The raw typed fields — and thus the CSV encoding — are untouched.
+    expect(a.numberOfDifferentColors, 2.0);
+    expect(b.numberOfDifferentColors, 4.0);
+    expect(a.toRow(), vector().toRow());
+  });
+
+  test('standardizeZ applies externally fitted parameters', () {
+    final train = DataVectorSet(data: [vector(), vector(colors: 4)]);
+    final params = train.standardizeZ();
+    final testSet = DataVectorSet(data: [vector()]);
+    final applied =
+        testSet.standardizeZ(mean: params.$1, stddev: params.$2);
+    expect(applied.$1, same(params.$1));
+    expect(applied.$2, same(params.$2));
+
+    final f = testSet.data.single.features;
+    // One below the training mean in the varying column...
+    expect(f[0], closeTo(-1.0, 1e-12));
+    // ...and 0 in the zero-variance columns.
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(f[j], 0);
+    }
+  });
+
+  test('standardizeZ on an empty set returns zero parameters', () {
+    final (mean, stddev) = DataVectorSet().standardizeZ();
+    expect(mean.length, DataVector.featureCount);
+    expect(stddev.length, DataVector.featureCount);
+    expect(mean, everyElement(0));
+    expect(stddev, everyElement(0));
   });
 }

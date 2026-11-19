@@ -6,36 +6,70 @@ import 'data_vector_set.dart';
 /// A decision tree trained with batch CART (Gini impurity).
 ///
 /// Mirrors the Go project's `datatree` package: the tree is independent of
-/// input row order (every split is evaluated over all samples at the node),
-/// and is serialized as pretty-printed JSON with the exact keys
-/// `feature`, `thresh`, `left`, `right`, `counts`.
+/// input row order (every split is evaluated over all samples at the node).
+/// The tree may carry the z-score standardization parameters it was
+/// trained with ([mean]/[stddev]), so new data can be put on the same scale
+/// before prediction.
+///
+/// Serialization: pretty-printed JSON with the top-level keys `root`,
+/// `mean`, `stddev` (the latter two omitted when absent). The node format
+/// uses the exact keys `feature`, `thresh`, `left`, `right`, `counts`.
 class DataTree {
   final DataTreeNode root;
 
-  DataTree({DataTreeNode? root})
+  /// Z-score standardization parameters the tree was trained with, or null
+  /// when the tree was trained on raw features.
+  final List<double>? mean;
+  final List<double>? stddev;
+
+  DataTree({DataTreeNode? root, this.mean, this.stddev})
       : root = root ?? DataTreeNode.leaf(const <String, int>{});
 
   /// Trains a tree from [dataSet].
-  static DataTree train(DataVectorSet dataSet) {
+  ///
+  /// [mean] and [stddev] are the standardization parameters the samples
+  /// were standardized with; they are stored with the tree so new data can
+  /// be put on the same scale before prediction.
+  static DataTree train(
+    DataVectorSet dataSet, {
+    List<double>? mean,
+    List<double>? stddev,
+  }) {
     final samples = [
       for (final vector in dataSet.data)
-        _Sample(vector.features(), vector.trafficSign),
+        _Sample(vector.features, vector.trafficSign),
     ];
     final indices = List<int>.generate(samples.length, (i) => i);
-    return DataTree(root: _build(samples, indices, 0));
+    return DataTree(
+      root: _build(samples, indices, 0),
+      mean: mean,
+      stddev: stddev,
+    );
   }
 
   /// Writes the tree to [path] as pretty-printed JSON.
   void save(String path) {
-    final encoded = const JsonEncoder.withIndent('  ').convert(root.toJson());
+    final encoded = const JsonEncoder.withIndent('  ').convert({
+      'root': root.toJson(),
+      if (mean != null) 'mean': mean,
+      if (stddev != null) 'stddev': stddev,
+    });
     File(path).writeAsStringSync(encoded);
   }
 
-  /// Loads a tree previously written by [save].
+  /// Loads a tree previously written by [save]. Also accepts the legacy
+  /// format in which the file contains the bare root node.
   static DataTree load(String path) {
-    final json = jsonDecode(File(path).readAsStringSync());
+    final json =
+        jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+    List<double>? standardization(String key) =>
+        (json[key] as List<dynamic>?)
+            ?.map((e) => (e as num).toDouble())
+            .toList();
     return DataTree(
-      root: DataTreeNode.fromJson(json as Map<String, dynamic>),
+      root: DataTreeNode.fromJson((json['root'] ?? json) as Map<String, dynamic>),
+      mean: standardization('mean'),
+      stddev: standardization('stddev'),
     );
   }
 }

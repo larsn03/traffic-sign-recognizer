@@ -13,15 +13,15 @@ DataVector randomVector(List<double> features, String label) {
   return DataVector(
     picturePath: '$label-${Random().nextInt(1 << 30)}.bmp',
     trafficSign: label,
-    numberOfDifferentColors: features[0].round(),
-    containsRed: features[1] > 0.5,
-    containsBlue: features[2] > 0.5,
-    containsYellow: features[3] > 0.5,
-    containsBlack: features[4] > 0.5,
+    numberOfDifferentColors: features[0],
+    containsRed: features[1] > 0.5 ? 1 : 0,
+    containsBlue: features[2] > 0.5 ? 1 : 0,
+    containsYellow: features[3] > 0.5 ? 1 : 0,
+    containsBlack: features[4] > 0.5 ? 1 : 0,
     numberOfColorChangesVertically:
-        List<int>.generate(10, (i) => (features[5 + i] * 10).round()),
+        List<double>.generate(10, (i) => features[5 + i] * 10),
     numberOfColorChangesHorizontally:
-        List<int>.generate(10, (i) => (features[15 + i] * 10).round()),
+        List<double>.generate(10, (i) => features[15 + i] * 10),
     whiteFractions: List<double>.generate(9, (i) => features[25 + i]),
     leftRightAsymmetry: List<double>.generate(9, (i) => features[34 + i]),
   );
@@ -53,7 +53,7 @@ void main() {
     expect(tree.root, isA<DataTreeNode>()); // a tree exists
     // Prediction must always return one of the training labels.
     for (final vector in data.sublist(0, 100)) {
-      expect(labels, contains(tree.root.predict(vector.features())));
+      expect(labels, contains(tree.root.predict(vector.features)));
     }
   });
 
@@ -81,6 +81,27 @@ void main() {
     final loaded = DataTree.load(path);
     final probe = List<double>.filled(43, 0.5);
     expect(loaded.root.predict(probe), tree.root.predict(probe));
+    File(path).deleteSync();
+  });
+
+  test('save/load round-trip preserves standardization parameters', () {
+    final data = <DataVector>[];
+    for (var i = 0; i < 40; i++) {
+      data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
+      data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
+    }
+    final classifier = DecisionTreeClassifier()
+      ..learnFromDataSet(DataVectorSet(data: data));
+    final tree = classifier.tree;
+    expect(tree.mean, isNotNull);
+    expect(tree.stddev, isNotNull);
+
+    final path =
+        '${Directory.systemTemp.createTempSync('tree-test').path}/tree.json';
+    tree.save(path);
+    final loaded = DataTree.load(path);
+    expect(loaded.mean, orderedEquals(tree.mean!));
+    expect(loaded.stddev, orderedEquals(tree.stddev!));
     File(path).deleteSync();
   });
 

@@ -44,12 +44,12 @@ void main() {
     final v = set.data.single;
     expect(v.trafficSign, 'Stop');
     expect(v.picturePath, 'Stop/0/80x60/X0Y0.png');
-    expect(v.containsRed, isTrue);
-    expect(v.containsBlue, isFalse);
-    expect(v.containsYellow, isFalse);
-    expect(v.containsBlack, isFalse);
+    expect(v.containsRed, 1);
+    expect(v.containsBlue, 0);
+    expect(v.containsYellow, 0);
+    expect(v.containsBlack, 0);
     // Red + white are present.
-    expect(v.numberOfDifferentColors, 2);
+    expect(v.numberOfDifferentColors, 2.0);
     // The red frame covers the corner cells; the white interior sits
     // inside the center cell, so it is mostly white.
     expect(v.whiteFractions[0], 0.0);

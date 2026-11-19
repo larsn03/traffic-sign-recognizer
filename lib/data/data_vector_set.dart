@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:csv/csv.dart';
 
@@ -27,6 +28,56 @@ class DataVectorSet {
     for (var i = 0; i < 9; i++) 'White_fraction_$i',
     for (var i = 0; i < 9; i++) 'Left_right_asymmetry_$i',
   ];
+
+  /// Z-score standardizes every vector in this set, in place.
+  ///
+  /// Each of the [DataVector.featureCount] feature columns is transformed
+  /// to `(x - mean) / stddev`, where [mean] and [stddev] are the column
+  /// mean and population standard deviation. When they are not supplied
+  /// they are fit on this set; supply parameters fitted elsewhere (e.g. on
+  /// a training set) to apply them to this set instead. Zero-variance
+  /// columns map to 0.
+  ///
+  /// Only the in-memory [DataVector.features] values are rewritten — the
+  /// raw typed fields, and therefore the CSV encoding, are untouched.
+  /// Returns the (mean, stddev) actually applied.
+  (List<double>, List<double>) standardizeZ({
+    List<double>? mean,
+    List<double>? stddev,
+  }) {
+    final n = DataVector.featureCount;
+    if (mean == null || stddev == null) {
+      final m = List<double>.filled(n, 0);
+      final v = List<double>.filled(n, 0);
+      if (data.isNotEmpty) {
+        for (final vector in data) {
+          final f = vector.features;
+          for (var j = 0; j < n; j++) {
+            m[j] += f[j];
+          }
+        }
+        for (var j = 0; j < n; j++) {
+          m[j] /= data.length;
+        }
+        for (final vector in data) {
+          final f = vector.features;
+          for (var j = 0; j < n; j++) {
+            final d = f[j] - m[j];
+            v[j] += d * d;
+          }
+        }
+        for (var j = 0; j < n; j++) {
+          v[j] = math.sqrt(v[j] / data.length);
+        }
+      }
+      mean = m;
+      stddev = v;
+    }
+    for (final vector in data) {
+      vector.standardize(mean, stddev);
+    }
+    return (mean, stddev);
+  }
 
   /// Writes the set to [pathToCsv] with the canonical header row, one row
   /// per successfully extracted vector. Uses LF line endings (matching the

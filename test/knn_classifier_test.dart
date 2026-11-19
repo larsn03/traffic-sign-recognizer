@@ -10,15 +10,15 @@ DataVector vector(String sign, List<double> features) {
   return DataVector(
     picturePath: '$sign.bmp',
     trafficSign: sign,
-    numberOfDifferentColors: features[0].round(),
-    containsRed: features[1] == 1,
-    containsBlue: features[2] == 1,
-    containsYellow: features[3] == 1,
-    containsBlack: features[4] == 1,
-    numberOfColorChangesVertically: List<int>.generate(
-        10, (i) => (features[5 + i] * 10).round()),
-    numberOfColorChangesHorizontally: List<int>.generate(
-        10, (i) => (features[15 + i] * 10).round()),
+    numberOfDifferentColors: features[0],
+    containsRed: features[1],
+    containsBlue: features[2],
+    containsYellow: features[3],
+    containsBlack: features[4],
+    numberOfColorChangesVertically:
+        List<double>.generate(10, (i) => features[5 + i] * 10),
+    numberOfColorChangesHorizontally:
+        List<double>.generate(10, (i) => features[15 + i] * 10),
     whiteFractions: List<double>.generate(9, (i) => features[25 + i]),
     leftRightAsymmetry: List<double>.generate(9, (i) => features[34 + i]),
   );
