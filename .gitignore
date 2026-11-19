@@ -1,3 +1,11 @@
 # https://dart.dev/tools/private-files
 # Created by `dart pub`
 .dart_tool/
+
+# Generated artifacts (see Makefile; written under ./output or the repo root)
+output/
+training.csv
+to_be_classified.csv
+results_tree.csv
+tree.json
+classifying.log

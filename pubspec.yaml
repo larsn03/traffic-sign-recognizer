@@ -8,6 +8,8 @@ environment:
 
 # Add regular dependencies here.
 dependencies:
+  csv: ^8.0.0
+  image: ^4.13.1
   path: ^1.9.0
 
 dev_dependencies:
