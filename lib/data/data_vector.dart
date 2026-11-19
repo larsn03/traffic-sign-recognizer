@@ -68,8 +68,8 @@ class DataVector {
           containsBlue,
           containsYellow,
           containsBlack,
-          for (final v in numberOfColorChangesVertically) v / 10,
-          for (final v in numberOfColorChangesHorizontally) v / 10,
+          ...numberOfColorChangesVertically,
+          ...numberOfColorChangesHorizontally,
           ...whiteFractions,
           ...leftRightAsymmetry,
         ];
@@ -131,10 +131,9 @@ class DataVector {
       containsBlue.round() == 1 ? '1' : '0',
       containsYellow.round() == 1 ? '1' : '0',
       containsBlack.round() == 1 ? '1' : '0',
-      for (final v in numberOfColorChangesVertically)
-        (v / 10).toStringAsFixed(1),
+      for (final v in numberOfColorChangesVertically) v.round().toString(),
       for (final v in numberOfColorChangesHorizontally)
-        (v / 10).toStringAsFixed(1),
+        v.round().toString(),
       for (final v in whiteFractions) v.toStringAsFixed(2),
       for (final v in leftRightAsymmetry) v.toStringAsFixed(2),
     ];
@@ -153,11 +152,11 @@ class DataVector {
       containsBlack: flag(6),
       numberOfColorChangesVertically: List<double>.generate(
         10,
-        (i) => double.parse(fields[7 + i]) * 10,
+        (i) => double.parse(fields[7 + i]),
       ),
       numberOfColorChangesHorizontally: List<double>.generate(
         10,
-        (i) => double.parse(fields[17 + i]) * 10,
+        (i) => double.parse(fields[17 + i]),
       ),
       whiteFractions:
           List<double>.generate(9, (i) => double.parse(fields[27 + i])),

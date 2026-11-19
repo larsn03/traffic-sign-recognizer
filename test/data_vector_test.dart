@@ -43,27 +43,27 @@ void main() {
     expect(row[4], '0'); // blue
     expect(row[5], '0'); // yellow
     expect(row[6], '0'); // black
-    expect(row[7], '0.1'); // vert[0] = 1/10, one decimal
-    expect(row[16], '1.0'); // vert[9] = 10/10
-    expect(row[17], '1.0'); // hor[0] = 10/10
-    expect(row[26], '0.1'); // hor[9] = 1/10
+    expect(row[7], '1'); // vert[0] = 1, raw count
+    expect(row[16], '10'); // vert[9] = 10, raw count
+    expect(row[17], '10'); // hor[0] = 10, raw count
+    expect(row[26], '1'); // hor[9] = 1, raw count
     expect(row[27], '0.00'); // white[0], two decimals
     expect(row[31], '0.50'); // white[4]
     expect(row[36], '0.00'); // asym[0]
     expect(row[37], '-0.50'); // asym[1]
   });
 
-  test('features returns 43 numeric features with /10 scaling', () {
+  test('features returns 43 raw numeric features', () {
     final f = vector().features;
     expect(f.length, DataVector.featureCount);
     expect(f.length, 43);
     expect(f[0], 2.0);
     expect(f[1], 1.0);
     expect(f[2], 0.0);
-    expect(f[5], 0.1); // vert[0]/10
-    expect(f[14], 1.0); // vert[9]/10
-    expect(f[15], 1.0); // hor[0]/10
-    expect(f[24], 0.1); // hor[9]/10
+    expect(f[5], 1.0); // vert[0]
+    expect(f[14], 10.0); // vert[9]
+    expect(f[15], 10.0); // hor[0]
+    expect(f[24], 1.0); // hor[9]
     expect(f[29], 0.5); // white[4]
     expect(f[35], -0.5); // asym[1]
     expect(f[42], 0.0); // asym[8]
@@ -200,10 +200,11 @@ void main() {
   test('l1Standardize divides the vector by its L1 norm', () {
     final v = vector();
     v.l1Standardize();
-    // L1 norm of the default vector: 2 + 1 + 5.5 + 5.5 + 4.2 + 2.16 = 20.36
-    // (the asymmetry features contribute their absolute values).
-    expect(v.features[0], closeTo(2 / 20.36, 1e-12));
-    expect(v.features[1], closeTo(1 / 20.36, 1e-12));
+    // L1 norm of the default vector: 2 + 1 + 55 + 55 + 4.2 + 2.16 = 119.36
+    // (the raw color-change counts sum to 55 each; the asymmetry features
+    // contribute their absolute values).
+    expect(v.features[0], closeTo(2 / 119.36, 1e-12));
+    expect(v.features[1], closeTo(1 / 119.36, 1e-12));
     expect(
         v.features.fold(0.0, (sum, f) => sum + f.abs()), closeTo(1.0, 1e-9));
     // The raw typed fields — and thus the CSV encoding — are untouched.

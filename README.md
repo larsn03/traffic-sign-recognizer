@@ -171,8 +171,8 @@ Both can be controlled with environment variables:
 ## CSV schema
 
 45 columns per row: `Traffic_Sign`, `Path`, an integer color count, four `0/1`
-presence flags, ten vertical + ten horizontal color-change counts (stored as
-`int/10`, one decimal), nine white fractions (`[0,1]`, two decimals), and nine
+presence flags, ten vertical + ten horizontal color-change counts (raw
+integers), nine white fractions (`[0,1]`, two decimals), and nine
 left–right asymmetries (`[-1,1]`, two decimals).
 
 ## Project layout

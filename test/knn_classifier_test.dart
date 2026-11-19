@@ -16,9 +16,9 @@ DataVector vector(String sign, List<double> features) {
     containsYellow: features[3],
     containsBlack: features[4],
     numberOfColorChangesVertically:
-        List<double>.generate(10, (i) => features[5 + i] * 10),
+        List<double>.generate(10, (i) => features[5 + i]),
     numberOfColorChangesHorizontally:
-        List<double>.generate(10, (i) => features[15 + i] * 10),
+        List<double>.generate(10, (i) => features[15 + i]),
     whiteFractions: List<double>.generate(9, (i) => features[25 + i]),
     leftRightAsymmetry: List<double>.generate(9, (i) => features[34 + i]),
   );
