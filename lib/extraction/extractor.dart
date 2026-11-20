@@ -16,15 +16,19 @@ import 'features.dart';
 /// Mirrors the Go project's `data_extraction` package: [pathToData] contains
 /// one subfolder per class label; images may be nested at arbitrary depth.
 ///
+/// [extractSplit] is the main entry point: it shuffles all images with a
+/// printed seed, puts the first 60% into a training CSV and the rest into a
+/// classification CSV.
+///
 /// Parallelism: extraction runs on a pool of isolates. Because the Dart VM
 /// caps the number of isolates that run in parallel inside one process
 /// (the cap is derived from the heap space available to the process),
-/// [extractToCsv] splits large job lists into contiguous shards and runs
+/// [extractSplit] splits large job lists into contiguous shards and runs
 /// one child process per shard — each with its own isolate pool — so the
 /// whole machine's core count can be saturated. Shard processes are
-/// signalled via the `TSR_SHARDS`/`TSR_SHARD` environment variables; the
-/// worker count can be overridden with `TSR_WORKERS` (used by the
-/// orchestrator and for debugging).
+/// signalled via the `TSR_SHARDS`/`TSR_SHARD`/`TSR_SEED` environment
+/// variables; the worker count can be overridden with `TSR_WORKERS` (used
+/// by the orchestrator and for debugging).
 class Extractor {
   /// Supported image extensions (case-insensitive).
   static const Set<String> supportedExtensions = {
@@ -64,35 +68,8 @@ class Extractor {
   }
 
   /// Extracts and writes the CSV to [pathToCsv].
-  ///
-  /// For large job lists the work is split into contiguous shards and one
-  /// child process per shard is started (each with its own isolate pool),
-  /// because the Dart VM caps the number of isolates that run in parallel
-  /// inside a single process. The shard CSVs are merged into [pathToCsv]
-  /// afterwards. A process that is itself a shard (signalled by the
-  /// `TSR_SHARDS`/`TSR_SHARD` environment variables) only extracts its own
-  /// chunk.
   Future<DataVectorSet> extractToCsv(String pathToData, String pathToCsv) async {
-    final env = Platform.environment;
-    final shards = int.tryParse(env['TSR_SHARDS'] ?? '');
-    final shard = int.tryParse(env['TSR_SHARD'] ?? '');
-    if (shards != null && shards > 1 && shard != null) {
-      final set = await extract(pathToData, shard: shard, shards: shards);
-      set.toCsv(pathToCsv);
-      return set;
-    }
-
-    final totalWorkers = _defaultWorkerCount();
-    final numProcs = totalWorkers <= _workersPerProcess
-        ? 1
-        : (totalWorkers + _workersPerProcess - 1) ~/ _workersPerProcess;
     final jobs = _collectJobs(pathToData);
-
-    if (numProcs > 1 && jobs.length >= _minJobsForMultiProcess) {
-      await _extractMultiProcess(pathToData, pathToCsv, numProcs);
-      return DataVectorSet.fromCsv(pathToCsv);
-    }
-
     final vectors = await _extractParallel(jobs);
     final set = DataVectorSet(
         data: [for (final vector in vectors) ?vector]);
@@ -100,31 +77,132 @@ class Extractor {
     return set;
   }
 
-  /// Runs one child process per shard, each extracting its contiguous job
-  /// slice with [_workersPerProcess] isolates, then merges the shard CSVs
-  /// into [pathToCsv].
-  Future<void> _extractMultiProcess(
-      String pathToData, String pathToCsv, int numProcs) async {
+  /// The fraction of all images that become training data; the rest
+  /// becomes classification data.
+  static const double trainFraction = 0.6;
+
+  /// Extracts every image under [root] and splits them into two CSVs: the
+  /// first [trainFraction] (after a seeded shuffle) go to [trainCsv], the
+  /// rest to [testCsv].
+  ///
+  /// Every call reshuffles: when [seed] is not supplied a fresh random
+  /// seed is used, and the seed is printed so the split can be
+  /// reproduced. A process that is itself a shard (signalled by the
+  /// `TSR_SHARDS`/`TSR_SHARD`/`TSR_SEED` environment variables) only
+  /// extracts its slice of the same deterministic shuffle and writes to
+  /// the shard CSVs it was given.
+  Future<int> extractSplit(
+      String root, String trainCsv, String testCsv,
+      {int? seed}) async {
+    final env = Platform.environment;
+    final shards = int.tryParse(env['TSR_SHARDS'] ?? '');
+    final shard = int.tryParse(env['TSR_SHARD'] ?? '');
+    if (shards != null && shards > 1 && shard != null) {
+      final s = int.parse(env['TSR_SEED']!);
+      await _extractSplitShard(root, s, shard, shards, trainCsv, testCsv);
+      return s;
+    }
+
+    final s = seed ?? math.Random().nextInt(1 << 30);
+    print('extraction seed: $s');
+    final jobs = _collectJobs(root);
+    final totalWorkers = _defaultWorkerCount();
+    final numProcs = totalWorkers <= _workersPerProcess
+        ? 1
+        : (totalWorkers + _workersPerProcess - 1) ~/ _workersPerProcess;
+    if (numProcs > 1 && jobs.length >= _minJobsForMultiProcess) {
+      await _extractSplitMultiProcess(root, trainCsv, testCsv, s, numProcs);
+    } else {
+      await _extractSplitInProcess(jobs, s, trainCsv, testCsv);
+    }
+    return s;
+  }
+
+  /// Shuffles [jobs] with [seed] and splits them into (training, test)
+  /// lists: the first [trainFraction] become training jobs, the rest test
+  /// jobs. The jobs are reindexed so parallel results come back in subset
+  /// order.
+  (List<_ExtractionJob>, List<_ExtractionJob>) _splitJobs(
+      List<_ExtractionJob> jobs, int seed) {
+    final order = List<int>.generate(jobs.length, (i) => i)
+      ..shuffle(math.Random(seed));
+    final trainCount = (jobs.length * trainFraction).floor();
+    final trainJobs = <_ExtractionJob>[];
+    final testJobs = <_ExtractionJob>[];
+    for (var rank = 0; rank < order.length; rank++) {
+      final job = jobs[order[rank]];
+      final subset = rank < trainCount ? trainJobs : testJobs;
+      subset.add(_ExtractionJob(subset.length, job.label, job.relativePath,
+          job.absolutePath));
+    }
+    return (trainJobs, testJobs);
+  }
+
+  /// Splits in memory and extracts both subsets in this process.
+  Future<void> _extractSplitInProcess(List<_ExtractionJob> jobs, int seed,
+      String trainCsv, String testCsv) async {
+    final (trainJobs, testJobs) = _splitJobs(jobs, seed);
+    final trainVectors = await _extractParallel(trainJobs);
+    DataVectorSet(data: [for (final v in trainVectors) ?v]).toCsv(trainCsv);
+    final testVectors = await _extractParallel(testJobs);
+    DataVectorSet(data: [for (final v in testVectors) ?v]).toCsv(testCsv);
+  }
+
+  /// Extracts this shard's contiguous slice of the shared shuffle and
+  /// writes its training rows to [trainCsv] and its test rows to
+  /// [testCsv] (both shard CSVs in a temp dir).
+  Future<void> _extractSplitShard(String root, int seed, int shard, int shards,
+      String trainCsv, String testCsv) async {
+    final jobs = _collectJobs(root);
+    final order = List<int>.generate(jobs.length, (i) => i)
+      ..shuffle(math.Random(seed));
+    final trainCount = (jobs.length * trainFraction).floor();
+    final per = jobs.length ~/ shards;
+    final start = shard * per;
+    final end = shard == shards - 1 ? jobs.length : start + per;
+    final trainJobs = <_ExtractionJob>[];
+    final testJobs = <_ExtractionJob>[];
+    for (var rank = start; rank < end; rank++) {
+      final job = jobs[order[rank]];
+      final subset = rank < trainCount ? trainJobs : testJobs;
+      subset.add(_ExtractionJob(subset.length, job.label, job.relativePath,
+          job.absolutePath));
+    }
+    final trainVectors = await _extractParallel(trainJobs);
+    DataVectorSet(data: [for (final v in trainVectors) ?v]).toCsv(trainCsv);
+    final testVectors = await _extractParallel(testJobs);
+    DataVectorSet(data: [for (final v in testVectors) ?v]).toCsv(testCsv);
+  }
+
+  /// Runs one child process per shard; each child reproduces the seeded
+  /// shuffle, extracts its slice, and writes shard CSVs for both subsets.
+  /// The shard CSVs are then merged into [trainCsv] and [testCsv].
+  Future<void> _extractSplitMultiProcess(String root, String trainCsv,
+      String testCsv, int seed, int numProcs) async {
     final scriptPath = Platform.script.toFilePath();
     final baseArgs = <String>[
       if (scriptPath != Platform.resolvedExecutable) scriptPath,
       '-e',
-      pathToData,
+      root,
     ];
-    final tempDir = Directory.systemTemp.createTempSync('tsr-shards-');
-    final shardCsvs = <String>[];
+    final tempDir = Directory.systemTemp.createTempSync('tsr-split-');
+    final trainShardCsvs = <String>[];
+    final testShardCsvs = <String>[];
     final exitCodes = <Future<int>>[];
     try {
       for (var i = 0; i < numProcs; i++) {
-        final shardCsv = p.join(tempDir.path, 'shard_$i.csv');
-        shardCsvs.add(shardCsv);
+        final trainShardCsv = p.join(tempDir.path, 'train_$i.csv');
+        final testShardCsv = p.join(tempDir.path, 'test_$i.csv');
+        trainShardCsvs.add(trainShardCsv);
+        testShardCsvs.add(testShardCsv);
         final process = await Process.start(
           Platform.resolvedExecutable,
-          [...baseArgs, shardCsv],
+          [...baseArgs, trainShardCsv, testShardCsv],
           environment: {
             ...Platform.environment,
             'TSR_SHARDS': '$numProcs',
             'TSR_SHARD': '$i',
+            'TSR_SEED': '$seed',
             'TSR_WORKERS': '$_workersPerProcess',
           },
         );
@@ -137,31 +215,32 @@ class Extractor {
               'shard $i exited with code $code', code);
         }
       }
-      _mergeCsvs(shardCsvs, pathToCsv);
+      _mergeCsvs(trainShardCsvs, trainCsv);
+      _mergeCsvs(testShardCsvs, testCsv);
     } finally {
       tempDir.deleteSync(recursive: true);
     }
   }
 
   /// Concatenates the shard CSVs (shards were assigned contiguous slices in
-  /// sorted order) into [pathToCsv], keeping a single header row.
+  /// sorted order) into [pathToCsv], keeping a single header row. The
+  /// output matches [DataVectorSet.toCsv] byte for byte (no trailing
+  /// newline).
   static void _mergeCsvs(List<String> shardCsvs, String pathToCsv) {
-    final buffer = StringBuffer();
+    final lines = <String>[];
     var headerWritten = false;
     for (final shardCsv in shardCsvs) {
-      final lines = File(shardCsv).readAsLinesSync();
-      if (lines.isEmpty) continue;
+      final shardLines = File(shardCsv).readAsLinesSync();
+      if (shardLines.isEmpty) continue;
       if (!headerWritten) {
-        buffer.writeln(lines.first);
+        lines.add(shardLines.first);
         headerWritten = true;
       }
-      for (var j = 1; j < lines.length; j++) {
-        buffer.writeln(lines[j]);
-      }
+      lines.addAll(shardLines.skip(1));
     }
     final file = File(pathToCsv);
     file.createSync(recursive: true);
-    file.writeAsStringSync(buffer.toString());
+    file.writeAsStringSync(lines.join('\n'));
   }
 }
 

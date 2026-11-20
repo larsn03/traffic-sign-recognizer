@@ -197,6 +197,75 @@ void main() {
     expect(max, everyElement(0));
   });
 
+  test('robustStandardize fits on this set and rewrites features in place',
+      () {
+    final a = vector();
+    final b = vector(colors: 4);
+    final set = DataVectorSet(data: [a, b]);
+    final (median, iqr) = set.robustStandardize();
+
+    // Only the color-count column varies: median 3, IQR 1 (Q3 3.5, Q1 2.5).
+    expect(median.length, DataVector.featureCount);
+    expect(median[0], 3.0);
+    expect(iqr[0], 1.0);
+    expect(a.features[0], -1.0);
+    expect(b.features[0], 1.0);
+    // Zero-IQR columns map to 0.
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(iqr[j], 0);
+      expect(a.features[j], 0);
+      expect(b.features[j], 0);
+    }
+    // The raw typed fields — and thus the CSV encoding — are untouched.
+    expect(a.numberOfDifferentColors, 2.0);
+    expect(b.numberOfDifferentColors, 4.0);
+    expect(a.toRow(), vector().toRow());
+  });
+
+  test('robustStandardize fits quantiles by linear interpolation', () {
+    final set = DataVectorSet(data: [
+      vector(colors: 1),
+      vector(colors: 2),
+      vector(colors: 3),
+      vector(colors: 4),
+    ]);
+    final (median, iqr) = set.robustStandardize();
+
+    // Column [1, 2, 3, 4]: median 2.5, Q1 1.75, Q3 3.25, IQR 1.5.
+    expect(median[0], 2.5);
+    expect(iqr[0], 1.5);
+    expect(set.data[0].features[0], -1.0);
+    expect(set.data[1].features[0], closeTo(-1 / 3, 1e-12));
+    expect(set.data[2].features[0], closeTo(1 / 3, 1e-12));
+    expect(set.data[3].features[0], 1.0);
+  });
+
+  test('robustStandardize applies externally fitted parameters', () {
+    final train = DataVectorSet(data: [vector(), vector(colors: 4)]);
+    final params = train.robustStandardize();
+    final testSet = DataVectorSet(data: [vector()]);
+    final applied =
+        testSet.robustStandardize(median: params.$1, iqr: params.$2);
+    expect(applied.$1, same(params.$1));
+    expect(applied.$2, same(params.$2));
+
+    final f = testSet.data.single.features;
+    // One below the training median in the varying column...
+    expect(f[0], closeTo(-1.0, 1e-12));
+    // ...and 0 in the zero-IQR columns.
+    for (var j = 1; j < DataVector.featureCount; j++) {
+      expect(f[j], 0);
+    }
+  });
+
+  test('robustStandardize on an empty set returns zero parameters', () {
+    final (median, iqr) = DataVectorSet().robustStandardize();
+    expect(median.length, DataVector.featureCount);
+    expect(iqr.length, DataVector.featureCount);
+    expect(median, everyElement(0));
+    expect(iqr, everyElement(0));
+  });
+
   test('l1Standardize divides the vector by its L1 norm', () {
     final v = vector();
     v.l1Standardize();

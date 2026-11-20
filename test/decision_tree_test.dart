@@ -130,6 +130,29 @@ void main() {
     File(path).deleteSync();
   });
 
+  test('save/load round-trip preserves robust scaling parameters', () {
+    final data = <DataVector>[];
+    for (var i = 0; i < 40; i++) {
+      data.add(randomVector(List<double>.filled(43, 0.0), 'A'));
+      data.add(randomVector(List<double>.filled(43, 1.0), 'B'));
+    }
+    final train = DataVectorSet(data: data);
+    final params = train.robustStandardize();
+    final classifier = DecisionTreeClassifier()
+      ..learnFromDataSet(train, median: params.$1, iqr: params.$2);
+    final tree = classifier.tree;
+    expect(tree.median, isNotNull);
+    expect(tree.iqr, isNotNull);
+
+    final path =
+        '${Directory.systemTemp.createTempSync('tree-test').path}/tree.json';
+    tree.save(path);
+    final loaded = DataTree.load(path);
+    expect(loaded.median, orderedEquals(tree.median!));
+    expect(loaded.iqr, orderedEquals(tree.iqr!));
+    File(path).deleteSync();
+  });
+
   test('save/load round-trip preserves the standardization marker', () {
     final data = <DataVector>[];
     for (var i = 0; i < 40; i++) {

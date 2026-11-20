@@ -121,6 +121,44 @@ class DataVectorSet {
     return (min, max);
   }
 
+  /// Robust-scales every vector in this set, in place.
+  ///
+  /// Each of the [DataVector.featureCount] feature columns is transformed
+  /// to `(x - median) / iqr`, where [median] and [iqr] are the column
+  /// median and interquartile range (Q3 - Q1). When they are not supplied
+  /// they are fit on this set; supply parameters fitted elsewhere (e.g. on
+  /// a training set) to apply them to this set instead. Zero-IQR columns
+  /// map to 0.
+  ///
+  /// Only the in-memory [DataVector.features] values are rewritten — the
+  /// raw typed fields, and therefore the CSV encoding, are untouched.
+  /// Returns the (median, iqr) actually applied.
+  (List<double>, List<double>) robustStandardize({
+    List<double>? median,
+    List<double>? iqr,
+  }) {
+    final n = DataVector.featureCount;
+    if (median == null || iqr == null) {
+      final med = List<double>.filled(n, 0);
+      final r = List<double>.filled(n, 0);
+      if (data.isNotEmpty) {
+        for (var j = 0; j < n; j++) {
+          final column = [
+            for (final vector in data) vector.features[j],
+          ]..sort();
+          med[j] = _quantile(column, 0.5);
+          r[j] = _quantile(column, 0.75) - _quantile(column, 0.25);
+        }
+      }
+      median = med;
+      iqr = r;
+    }
+    for (final vector in data) {
+      vector.robustStandardize(median, iqr);
+    }
+    return (median, iqr);
+  }
+
   /// L1-norm standardizes every vector in this set, in place: each vector
   /// is divided by the sum of the absolute values of its features. The
   /// transform is per-vector, so no parameters are fitted — it is applied
@@ -171,4 +209,15 @@ class DataVectorSet {
     }
     return DataVectorSet(data: data);
   }
+}
+
+/// Linear-interpolated quantile of a sorted, non-empty list (the same
+/// convention as numpy's default `linear` method).
+double _quantile(List<double> sorted, double q) {
+  if (sorted.length == 1) return sorted[0];
+  final pos = (sorted.length - 1) * q;
+  final base = pos.floor();
+  final frac = pos - base;
+  final next = math.min(base + 1, sorted.length - 1);
+  return sorted[base] + frac * (sorted[next] - sorted[base]);
 }

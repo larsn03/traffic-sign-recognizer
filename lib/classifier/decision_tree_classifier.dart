@@ -32,11 +32,12 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
   }
 
   /// Trains a tree from [dataSet]. [standardization] names the method the
-  /// samples were standardized with (`'z'`, `'minmax'`, `'l1'` or `'l2'`),
-  /// and [mean]/[stddev] / [min]/[max] are the matching parameters (see
-  /// [DataVectorSet.standardizeZ], [DataVectorSet.minMaxStandardize],
-  /// [DataVectorSet.l1Standardize] and [DataVectorSet.l2Standardize]); they
-  /// are stored with the tree so new data can be put on the same scale
+  /// samples were standardized with (`'z'`, `'minmax'`, `'l1'`, `'l2'` or
+  /// `'rs'`), and [mean]/[stddev] / [min]/[max] / [median]/[iqr] are the
+  /// matching parameters (see [DataVectorSet.standardizeZ],
+  /// [DataVectorSet.minMaxStandardize], [DataVectorSet.l1Standardize],
+  /// [DataVectorSet.l2Standardize] and [DataVectorSet.robustStandardize]);
+  /// they are stored with the tree so new data can be put on the same scale
   /// before prediction.
   @override
   DataTree learnFromDataSet(
@@ -46,13 +47,17 @@ class DecisionTreeClassifier implements ClassifierApi, LearnerApi<DataTree> {
     List<double>? stddev,
     List<double>? min,
     List<double>? max,
+    List<double>? median,
+    List<double>? iqr,
   }) {
     tree = DataTree.train(dataSet,
         standardization: standardization,
         mean: mean,
         stddev: stddev,
         min: min,
-        max: max);
+        max: max,
+        median: median,
+        iqr: iqr);
     return tree;
   }
 }

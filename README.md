@@ -41,14 +41,17 @@ The entrypoint is `bin/traffic_sign_recognizer.dart`. All modes are invoked as:
 dart run bin/traffic_sign_recognizer.dart <mode> [args]
 ```
 
-### Extract features → CSV
+### Extract features → CSV (seeded 60/40 split)
 
 ```bash
-dart run bin/traffic_sign_recognizer.dart -e <imageDir> <out.csv>
+dart run bin/traffic_sign_recognizer.dart -e <imageDir> <train.csv> <test.csv>
 ```
 
-Walks `<imageDir>` recursively; each subfolder name is the class label. Writes
-one feature-vector row per image (45 columns; see [CSV schema](#csv-schema)).
+Walks `<imageDir>` recursively; the top-level subfolder of each image is the
+class label. Every run shuffles all images with a fresh random seed (printed
+as `extraction seed: N`), writes the first 60% to `<train.csv>` and the
+remaining 40% to `<test.csv>` (one feature-vector row per image, 45 columns;
+see [CSV schema](#csv-schema)).
 
 ### KNN classification
 
@@ -88,13 +91,13 @@ accuracy proportion).
 Append `-printfaulty` to a KNN or decision-tree classification to also write
 the misclassified images to `classifying.log`.
 
-### `-z` / `-minmax` / `-l1` / `-l2`
+### `-z` / `-minmax` / `-l1` / `-l2` / `-rs`
 
-Append `-z` (z-score), `-minmax` (min-max), `-l1` (L1 norm) or `-l2`
-(L2 norm) to a KNN, decision-tree training, or decision-tree
-classification run to standardize the feature vectors in memory.
-Parameters are fitted on the training set and applied to the test set as
-well; the flags are mutually exclusive.
+Append `-z` (z-score), `-minmax` (min-max), `-l1` (L1 norm), `-l2`
+(L2 norm) or `-rs` (robust scaling) to a KNN, decision-tree training, or
+decision-tree classification run to standardize the feature vectors in
+memory. Parameters are fitted on the training set and applied to the test
+set as well; the flags are mutually exclusive.
 
 - `-z`: each column is mapped to zero mean / unit variance (population
   standard deviation; zero-variance columns map to 0).
@@ -104,6 +107,9 @@ well; the flags are mutually exclusive.
   zero-norm vectors stay zero).
 - `-l2`: each vector is divided by its L2 norm (Euclidean norm; zero-norm
   vectors stay zero).
+- `-rs`: each column is mapped to `(x - median) / iqr`, where the IQR is
+  the interquartile range (Q3 - Q1, linearly interpolated quantiles;
+  zero-IQR columns map to 0).
 
 The `-l1`/`-l2` transforms are per-vector, so no parameters are fitted —
 they are applied identically to training and test data.
@@ -125,28 +131,17 @@ Convenience wrappers around the CLI (artifacts are written under `./output`):
 
 | Target | Command |
 |---|---|
-| `eclass` | extract the test set → `output/to_be_classified_data.csv` |
-| `etrain` | extract the training set → `output/training_data.csv` |
+| `extract` | extract all images (seeded 60/40 split) → `output/training_data.csv` + `output/to_be_classified_data.csv` |
 | `etree` | train the tree → `output/tree.json` |
 | `ctree` | classify the test set with the tree → `output/results_tree.csv` |
 | `cknn` | classify the test set with KNN |
 | `cknnlog` | KNN + `-printfaulty` (logs to `classifying.log`) |
-| `test` | train + classify with `-z`, `-minmax`, `-l1` and `-l2`, without re-extracting (CSVs generated only if missing) |
+| `test` | train + classify with no standardization plus `-z`, `-minmax`, `-l1`, `-l2` and `-rs`, without re-extracting (CSVs generated only if missing) |
 | `all` | run the full pipeline |
 | `clean` | remove generated artifacts |
 
 ```bash
 make all
-```
-
-## Dataset splitter
-
-`mix_datasets.py` splits a labelled dataset 60/40 into
-`training_data_new` / `to_be_classified_data_new` (seed `42`, structure
-preserved, source untouched):
-
-```bash
-python3 mix_datasets.py <source_dir> <output_dir>
 ```
 
 ## Parallelism
@@ -165,8 +160,9 @@ set).
 Both can be controlled with environment variables:
 
 - `TSR_WORKERS` — total worker isolates (default: CPU count).
-- `TSR_SHARDS` / `TSR_SHARD` — internal sharding coordinates for extraction
-  (set automatically by the orchestrator; generally not needed by hand).
+- `TSR_SHARDS` / `TSR_SHARD` / `TSR_SEED` — internal sharding coordinates
+  and shared shuffle seed for extraction (set automatically by the
+  orchestrator; generally not needed by hand).
 
 ## CSV schema
 
@@ -185,8 +181,7 @@ lib/
   extraction/                      # color classification + feature extraction
 test/                              # unit + integration tests
 assets/
-  training_data/                   # labelled training images (class subfolders)
-  to_be_classified_data/           # images to classify
+  images/                          # all labelled images (class subfolders)
   all_signs_png/                   # one reference PNG per sign
 ```
 

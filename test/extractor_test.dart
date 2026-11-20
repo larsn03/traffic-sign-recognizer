@@ -87,4 +87,54 @@ void main() {
     final set = await Extractor().extract(tempDir.path);
     expect(set.data.length, 1);
   });
+
+  test('extractSplit writes both CSVs with a 60/40 split', () async {
+    final dirA = Directory('${tempDir.path}/Stop/0')
+      ..createSync(recursive: true);
+    final dirB = Directory('${tempDir.path}/Yield/0')
+      ..createSync(recursive: true);
+    for (var i = 0; i < 10; i++) {
+      writeSign(dirA, 'A$i.png');
+      writeSign(dirB, 'B$i.png');
+    }
+
+    final trainCsv = '${tempDir.path}/train.csv';
+    final testCsv = '${tempDir.path}/test.csv';
+    final seed =
+        await Extractor().extractSplit(tempDir.path, trainCsv, testCsv, seed: 42);
+    expect(seed, 42);
+
+    // 20 images: 12 training (60%), 8 test (40%).
+    final trainLines = File(trainCsv).readAsLinesSync();
+    final testLines = File(testCsv).readAsLinesSync();
+    expect(trainLines.length, 1 + 12);
+    expect(testLines.length, 1 + 8);
+
+    // The two CSVs partition the 20 images.
+    final trainPaths = trainLines.skip(1).map((l) => l.split(',')[1]).toSet();
+    final testPaths = testLines.skip(1).map((l) => l.split(',')[1]).toSet();
+    expect(trainPaths.intersection(testPaths), isEmpty);
+    expect(trainPaths.length + testPaths.length, 20);
+  });
+
+  test('extractSplit is deterministic for a given seed', () async {
+    final dirA = Directory('${tempDir.path}/Stop/0')
+      ..createSync(recursive: true);
+    final dirB = Directory('${tempDir.path}/Yield/0')
+      ..createSync(recursive: true);
+    for (var i = 0; i < 10; i++) {
+      writeSign(dirA, 'A$i.png');
+      writeSign(dirB, 'B$i.png');
+    }
+
+    final train1 = '${tempDir.path}/train1.csv';
+    final test1 = '${tempDir.path}/test1.csv';
+    await Extractor().extractSplit(tempDir.path, train1, test1, seed: 42);
+    final train2 = '${tempDir.path}/train2.csv';
+    final test2 = '${tempDir.path}/test2.csv';
+    await Extractor().extractSplit(tempDir.path, train2, test2, seed: 42);
+
+    expect(File(train1).readAsStringSync(), File(train2).readAsStringSync());
+    expect(File(test1).readAsStringSync(), File(test2).readAsStringSync());
+  });
 }

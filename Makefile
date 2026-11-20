@@ -8,22 +8,20 @@ APP    := dart run bin/traffic_sign_recognizer.dart
 ASSETS := ./assets
 OUT    := ./output
 
-.PHONY: all prepare eclass etrain etree ctree cknn cknnlog test clean
+.PHONY: all prepare extract etree ctree cknn cknnlog test clean
 
-# Run the full pipeline: extract both sets, train the tree, classify.
-all: prepare eclass etrain etree ctree cknn
+# Run the full pipeline: extract (seeded 60/40 split), train the tree,
+# classify.
+all: prepare extract etree ctree cknn
 
 # Ensure the output directory exists.
 prepare:
 	mkdir -p $(OUT)
 
-# Extract the test-set feature vectors.
-eclass: prepare
-	$(APP) -e $(ASSETS)/to_be_classified_data/ $(OUT)/to_be_classified_data.csv
-
-# Extract the training-set feature vectors.
-etrain: prepare
-	$(APP) -e $(ASSETS)/training_data $(OUT)/training_data.csv
+# Extract all images under assets/images: a seeded random 60/40 split into
+# training_data.csv and to_be_classified_data.csv (the seed is printed).
+extract: prepare
+	$(APP) -e $(ASSETS)/images $(OUT)/training_data.csv $(OUT)/to_be_classified_data.csv
 
 # Train the decision tree from the training CSV (z-standardized).
 etree: prepare
@@ -41,12 +39,15 @@ cknn: prepare
 cknnlog: prepare
 	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv -z -printfaulty
 
-# Run every non-extraction command (train + classify) with all four
-# standardization methods. The extracted CSVs are only generated if
-# missing, so the slow image extraction is skipped on repeat runs.
+# Run every non-extraction command (train + classify) without any
+# standardization and with all five standardization methods. The extracted
+# CSVs are only generated if missing, so the slow image extraction is
+# skipped on repeat runs.
 test: prepare
-	@test -f $(OUT)/training_data.csv || $(APP) -e $(ASSETS)/training_data $(OUT)/training_data.csv
-	@test -f $(OUT)/to_be_classified_data.csv || $(APP) -e $(ASSETS)/to_be_classified_data/ $(OUT)/to_be_classified_data.csv
+	@test -f $(OUT)/training_data.csv -a -f $(OUT)/to_be_classified_data.csv || $(APP) -e $(ASSETS)/images $(OUT)/training_data.csv $(OUT)/to_be_classified_data.csv
+	$(APP) -dtree-train $(OUT)/training_data.csv $(OUT)/tree_raw.json
+	$(APP) -dtree-classify $(OUT)/tree_raw.json $(OUT)/to_be_classified_data.csv $(OUT)/results_tree_raw.csv
+	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv
 	$(APP) -dtree-train $(OUT)/training_data.csv $(OUT)/tree.json -z
 	$(APP) -dtree-classify $(OUT)/tree.json $(OUT)/to_be_classified_data.csv $(OUT)/results_tree.csv -z
 	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv -z
@@ -60,6 +61,9 @@ test: prepare
 	$(APP) -dtree-train $(OUT)/training_data.csv $(OUT)/tree_l2.json -l2
 	$(APP) -dtree-classify $(OUT)/tree_l2.json $(OUT)/to_be_classified_data.csv $(OUT)/results_tree_l2.csv -l2
 	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv -l2
+	$(APP) -dtree-train $(OUT)/training_data.csv $(OUT)/tree_rs.json -rs
+	$(APP) -dtree-classify $(OUT)/tree_rs.json $(OUT)/to_be_classified_data.csv $(OUT)/results_tree_rs.csv -rs
+	$(APP) -knn $(OUT)/to_be_classified_data.csv $(OUT)/training_data.csv -rs
 
 # Remove generated artifacts.
 clean:

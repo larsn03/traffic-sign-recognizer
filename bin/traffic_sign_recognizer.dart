@@ -12,9 +12,10 @@ Future<void> main(List<String> args) async {
 /// Argument parsing is a manual two-pass walk (no flag package), mirroring
 /// the Go original:
 ///  * first pass extracts the standalone `-printfaulty`, `-z`, `-minmax`,
-///    `-l1` and `-l2` boolean flags;
+///    `-l1`, `-l2` and `-rs` boolean flags;
 ///  * second pass dispatches on the mode flags
-///    `-e <dir> <csv>`, `-knn <in> <out>`, `-dtree-train <train> <treeFile>`,
+///    `-e <dir> <trainCsv> <testCsv>`, `-knn <in> <out>`,
+///    `-dtree-train <train> <treeFile>`,
 ///    `-dtree-classify <tree> <test> <out>`;
 ///  * any other token must be an integer and sets the KNN k value;
 ///  * the first non-empty mode is dispatched.
@@ -27,13 +28,14 @@ Future<int> run(List<String> args) async {
 }
 
 Future<int> _dispatch(List<String> args) async {
-  // First pass: extract the standalone -printfaulty, -z, -minmax, -l1 and
-  // -l2 flags.
+  // First pass: extract the standalone -printfaulty, -z, -minmax, -l1,
+  // -l2 and -rs flags.
   var printfaulty = false;
   var z = false;
   var minmax = false;
   var l1 = false;
   var l2 = false;
+  var rs = false;
   final filtered = <String>[];
   for (final arg in args) {
     if (arg == '-printfaulty') {
@@ -46,6 +48,8 @@ Future<int> _dispatch(List<String> args) async {
       l1 = true;
     } else if (arg == '-l2') {
       l2 = true;
+    } else if (arg == '-rs') {
+      rs = true;
     } else {
       filtered.add(arg);
     }
@@ -55,12 +59,13 @@ Future<int> _dispatch(List<String> args) async {
   if (minmax) standardizations++;
   if (l1) standardizations++;
   if (l2) standardizations++;
+  if (rs) standardizations++;
   if (standardizations > 1) {
-    return _fail('-z, -minmax, -l1 and -l2 are mutually exclusive');
+    return _fail('-z, -minmax, -l1, -l2 and -rs are mutually exclusive');
   }
 
   // Second pass: dispatch on known mode flags.
-  String? extractDir, extractCsv;
+  String? extractDir, extractTrainCsv, extractTestCsv;
   String? classifyIn, classifyOut;
   String? dtTrain, dtTreeFile;
   String? dtTest, dtOut;
@@ -70,12 +75,13 @@ Future<int> _dispatch(List<String> args) async {
   while (i < filtered.length) {
     switch (filtered[i]) {
       case '-e':
-        if (i + 2 >= filtered.length) {
+        if (i + 3 >= filtered.length) {
           return _fail('missing arguments for -e');
         }
         extractDir = filtered[i + 1];
-        extractCsv = filtered[i + 2];
-        i += 3;
+        extractTrainCsv = filtered[i + 2];
+        extractTestCsv = filtered[i + 3];
+        i += 4;
       case '-knn':
         if (i + 2 >= filtered.length) {
           return _fail('missing arguments for -knn');
@@ -110,7 +116,8 @@ Future<int> _dispatch(List<String> args) async {
 
   // Dispatch: the first non-empty mode wins.
   if (extractDir != null) {
-    await Extractor().extractToCsv(extractDir, extractCsv!);
+    await Extractor().extractSplit(
+        extractDir, extractTrainCsv!, extractTestCsv!);
     return 0;
   }
   if (classifyIn != null) {
@@ -128,11 +135,14 @@ Future<int> _dispatch(List<String> args) async {
     } else if (l2) {
       trainSet.l2Standardize();
       testSet.l2Standardize();
+    } else if (rs) {
+      final params = trainSet.robustStandardize();
+      testSet.robustStandardize(median: params.$1, iqr: params.$2);
     }
     final results = await KnnClassifier(alreadyClassifiedData: trainSet, k: k)
         .classify(testSet);
     final standardization =
-        z ? 'z' : minmax ? 'minmax' : l1 ? 'l1' : l2 ? 'l2' : null;
+        z ? 'z' : minmax ? 'minmax' : l1 ? 'l1' : l2 ? 'l2' : rs ? 'rs' : null;
     print('KNN | standardization: ${_standardizationName(standardization)}');
     if (printfaulty) logFaulty(results, 'classifying.log');
     _printAccuracy(results);
@@ -141,7 +151,7 @@ Future<int> _dispatch(List<String> args) async {
   if (dtTrain != null) {
     final trainSet = DataVectorSet.fromCsv(dtTrain);
     String? standardization;
-    List<double>? mean, stddev, min, max;
+    List<double>? mean, stddev, min, max, median, iqr;
     if (z) {
       standardization = 'z';
       final params = trainSet.standardizeZ();
@@ -158,13 +168,20 @@ Future<int> _dispatch(List<String> args) async {
     } else if (l2) {
       standardization = 'l2';
       trainSet.l2Standardize();
+    } else if (rs) {
+      standardization = 'rs';
+      final params = trainSet.robustStandardize();
+      median = params.$1;
+      iqr = params.$2;
     }
     final tree = DecisionTreeClassifier().learnFromDataSet(trainSet,
         standardization: standardization,
         mean: mean,
         stddev: stddev,
         min: min,
-        max: max);
+        max: max,
+        median: median,
+        iqr: iqr);
     tree.save(dtTreeFile!);
     print('Decision tree saved to $dtTreeFile');
     return 0;
@@ -197,9 +214,15 @@ Future<int> _dispatch(List<String> args) async {
             'tree $dtTreeFile was trained without -l2; pass -l2 to classify with it');
       }
       testSet.l2Standardize();
+    } else if (rs) {
+      if (standardization != 'rs') {
+        return _fail(
+            'tree $dtTreeFile was trained without -rs; pass -rs to classify with it');
+      }
+      testSet.robustStandardize(median: tree.median!, iqr: tree.iqr!);
     } else if (standardization != null) {
       return _fail('tree $dtTreeFile was trained with standardization '
-          '($standardization); pass -z, -minmax, -l1 or -l2 to classify with it');
+          '($standardization); pass -z, -minmax, -l1, -l2 or -rs to classify with it');
     }
     final results =
         await DecisionTreeClassifier(tree: tree).classify(testSet);
@@ -224,6 +247,7 @@ String _standardizationName(String? s) => switch (s) {
       'minmax' => 'min-max',
       'l1' => 'L1 norm',
       'l2' => 'L2 norm',
+      'rs' => 'robust scaling',
       _ => 'none',
     };
 

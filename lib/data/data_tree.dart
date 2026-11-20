@@ -8,19 +8,21 @@ import 'data_vector_set.dart';
 /// Mirrors the Go project's `datatree` package: the tree is independent of
 /// input row order (every split is evaluated over all samples at the node).
 /// The tree may carry the standardization method it was trained with
-/// ([standardization]: `'z'`, `'minmax'`, `'l1'` or `'l2'`) and the
-/// matching parameters (z-score: [mean]/[stddev]; min-max: [min]/[max]), so
-/// new data can be put on the same scale before prediction.
+/// ([standardization]: `'z'`, `'minmax'`, `'l1'`, `'l2'` or `'rs'`) and the
+/// matching parameters (z-score: [mean]/[stddev]; min-max: [min]/[max];
+/// robust scaling: [median]/[iqr]), so new data can be put on the same
+/// scale before prediction.
 ///
 /// Serialization: pretty-printed JSON with the top-level keys `root`,
-/// `standardization`, `mean`, `stddev`, `min`, `max` (the latter five
-/// omitted when absent). The node format uses the exact keys `feature`,
-/// `thresh`, `left`, `right`, `counts`.
+/// `standardization`, `mean`, `stddev`, `min`, `max`, `median`, `iqr`
+/// (the latter six omitted when absent). The node format uses the exact
+/// keys `feature`, `thresh`, `left`, `right`, `counts`.
 class DataTree {
   final DataTreeNode root;
 
   /// The standardization method the tree was trained with: `'z'`, `'minmax'`,
-  /// `'l1'` or `'l2'`, or null when the tree was trained on raw features.
+  /// `'l1'`, `'l2'` or `'rs'`, or null when the tree was trained on raw
+  /// features.
   final String? standardization;
 
   /// Z-score standardization parameters the tree was trained with, or null
@@ -33,22 +35,31 @@ class DataTree {
   final List<double>? min;
   final List<double>? max;
 
+  /// Robust scaling parameters the tree was trained with (column median
+  /// and interquartile range), or null when the tree was not trained with
+  /// robust scaling.
+  final List<double>? median;
+  final List<double>? iqr;
+
   DataTree(
       {DataTreeNode? root,
       this.standardization,
       this.mean,
       this.stddev,
       this.min,
-      this.max})
+      this.max,
+      this.median,
+      this.iqr})
       : root = root ?? DataTreeNode.leaf(const <String, int>{});
 
   /// Trains a tree from [dataSet].
   ///
   /// [standardization] names the method the samples were standardized with
-  /// (`'z'`, `'minmax'`, `'l1'` or `'l2'`), and the parameters
-  /// ([mean]/[stddev] for z-score, [min]/[max] for min-max) describe how
-  /// the samples were standardized; they are stored with the tree so new
-  /// data can be put on the same scale before prediction.
+  /// (`'z'`, `'minmax'`, `'l1'`, `'l2'` or `'rs'`), and the parameters
+  /// ([mean]/[stddev] for z-score, [min]/[max] for min-max,
+  /// [median]/[iqr] for robust scaling) describe how the samples were
+  /// standardized; they are stored with the tree so new data can be put on
+  /// the same scale before prediction.
   static DataTree train(
     DataVectorSet dataSet, {
     String? standardization,
@@ -56,6 +67,8 @@ class DataTree {
     List<double>? stddev,
     List<double>? min,
     List<double>? max,
+    List<double>? median,
+    List<double>? iqr,
   }) {
     final samples = [
       for (final vector in dataSet.data)
@@ -69,6 +82,8 @@ class DataTree {
       stddev: stddev,
       min: min,
       max: max,
+      median: median,
+      iqr: iqr,
     );
   }
 
@@ -81,6 +96,8 @@ class DataTree {
       if (stddev != null) 'stddev': stddev,
       if (min != null) 'min': min,
       if (max != null) 'max': max,
+      if (median != null) 'median': median,
+      if (iqr != null) 'iqr': iqr,
     });
     File(path).writeAsStringSync(encoded);
   }
@@ -101,6 +118,8 @@ class DataTree {
       stddev: params('stddev'),
       min: params('min'),
       max: params('max'),
+      median: params('median'),
+      iqr: params('iqr'),
     );
   }
 }

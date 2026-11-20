@@ -92,6 +92,16 @@ class DataVector {
     }
   }
 
+  /// Rewrites [features] in place as `(x - median) / iqr`, where [median]
+  /// and [iqr] are the column median and interquartile range; a column
+  /// with zero IQR maps to 0.
+  void robustStandardize(List<double> median, List<double> iqr) {
+    for (var j = 0; j < features.length; j++) {
+      final r = iqr[j];
+      features[j] = r == 0 ? 0 : (features[j] - median[j]) / r;
+    }
+  }
+
   /// Rewrites [features] in place as `x / ||x||_1` (L1 norm scaling), so
   /// the sum of the absolute values of the features is 1; a zero-norm
   /// vector stays all zeros.
